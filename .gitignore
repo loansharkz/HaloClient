@@ -6,3 +6,4 @@ src-tauri/gen/
 .env.*
 *.log
 .DS_Store
+dist-artifact/

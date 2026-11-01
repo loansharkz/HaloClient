@@ -1,4 +1,4 @@
-import { HashRouter, Route, type RouteSectionProps } from "@solidjs/router";
+import { HashRouter, MemoryRouter, Route, type RouteSectionProps } from "@solidjs/router";
 import { lazy } from "solid-js";
 import { Aurora, Sidebar, TitleBar, Toasts } from "./components/Shell";
 import { initThemeSync } from "./lib/store";
@@ -29,14 +29,17 @@ function Layout(props: RouteSectionProps) {
 
 export default function App() {
   initThemeSync();
+  // The shareable preview runs inside a sandboxed frame that drops "#/path"
+  // hashes, so it routes in memory instead.
+  const Router = import.meta.env.VITE_ARTIFACT ? MemoryRouter : HashRouter;
   return (
-    <HashRouter root={Layout}>
+    <Router root={Layout}>
       <Route path="/" component={Home} />
       <Route path="/instances" component={Instances} />
       <Route path="/instances/:id" component={InstanceDetail} />
       <Route path="/browse" component={Browse} />
       <Route path="/accounts" component={Accounts} />
       <Route path="/settings" component={Settings} />
-    </HashRouter>
+    </Router>
   );
 }
