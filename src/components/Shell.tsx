@@ -5,13 +5,7 @@ import { HaloLogo } from "./Icons";
 import { app, activeAccount, setSettings, settings } from "../lib/store";
 import { ADS_ENABLED, IS_TAURI } from "../lib/config";
 
-export function Aurora() {
-  return (
-    <div class="aurora" classList={{ paused: !settings.animatedBackground }}>
-      <span /><span /><span />
-    </div>
-  );
-}
+export { default as Background } from "./Starfield";
 
 const NAV = [
   { href: "/", label: "Home", icon: House, end: true },

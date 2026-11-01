@@ -1,0 +1,7 @@
+{
+  "projects": [
+    "sodium", "iris", "modernfix", "lithium", "xaeros-minimap", "modmenu", "entityculling", "appleskin",
+    "jei", "ferrite-core", "immediatelyfast", "ae2", "create"
+  ],
+  "servers": ["mc.hypixel.net", "donutsmp.net", "minemen.club"]
+}

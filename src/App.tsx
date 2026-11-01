@@ -1,6 +1,6 @@
 import { HashRouter, MemoryRouter, Route, type RouteSectionProps } from "@solidjs/router";
 import { lazy } from "solid-js";
-import { Aurora, Sidebar, TitleBar, Toasts } from "./components/Shell";
+import { Background, Sidebar, TitleBar, Toasts } from "./components/Shell";
 import { initThemeSync } from "./lib/store";
 import Home from "./pages/Home";
 
@@ -14,7 +14,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 function Layout(props: RouteSectionProps) {
   return (
     <div class="relative h-full flex flex-col overflow-hidden" style={{ "border-radius": "inherit" }}>
-      <Aurora />
+      <Background />
       <div class="relative z-10 flex flex-col h-full">
         <TitleBar />
         <div class="flex flex-1 min-h-0 gap-3 px-3 pb-3">

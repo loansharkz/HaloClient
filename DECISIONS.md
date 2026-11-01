@@ -22,10 +22,12 @@ Answers from Leo's Step 0 question round (2026-11-01), plus choices Claude made 
 | Vibe | **Glassy / frosted**: translucent blurred panels |
 | Palette | **Violet / purple**: dark indigo glass with a violet→pink glow |
 | Theme modes | **Dark + light toggle**, plus an **accent color picker** |
-| Background | **Animated gradient** (slow aurora mesh in CSS, paused when the window is hidden, honors reduced-motion) |
+| Background | **Shooting stars** (changed 2026-11-01): night sky with twinkling stars and occasional shooting stars on one canvas, tinted by the accent, over a static violet nebula glow. The loop stops when the window is hidden, the game is running, the toggle is off, or reduced-motion is set. |
 | Logo | **Glowing halo ring** (placeholder SVG by Claude) |
 | Layout | **Left icon sidebar**, big hero Play button on Home |
 | Home content | Recent instances + Play, **3D skin render**, **news feed**, **servers quick-join** |
+| Quick join | Shows **only servers the player actually joined**, newest first. History comes from quick-joins plus `Connecting to <host>` lines in game logs. Each row shows the server's **real favicon + MOTD** (§ color codes rendered; no server HTML) and player count from a live Server List Ping, plus when you last played it and on which instance. Join launches that instance. |
+| Pictures | Public projects use their **real Modrinth icon + gallery images** (cards, banners, project gallery, installed-mod rows, news art). Server-linked instances use the server favicon. Gradient tiles are only a fallback when media can't load. |
 | Motion / window | **Subtle micro-interactions**; **frameless rounded window** with custom titlebar |
 | Fonts | **Inter** (clean sans) |
 | Mod browser | **Grid/list toggle**, grid by default |

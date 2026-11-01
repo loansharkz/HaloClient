@@ -3,7 +3,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import {
   ChevronRight, CircleArrowUp, Copy, Cpu, FileArchive, Folder, Gauge, Image, MemoryStick, Puzzle, RefreshCw, Search, Settings, Sparkles, Terminal, Timer, Trash2, TriangleAlert,
 } from "lucide-solid";
-import { IconTile } from "../components/Icons";
+import { InstanceIcon, ModIcon } from "../components/Icons";
 import { Toggle } from "../components/Shell";
 import { LOADER_LABEL, MOCK_LOG } from "../lib/mock";
 import { app, setApp, toast } from "../lib/store";
@@ -35,7 +35,7 @@ export default function InstanceDetail() {
 
       <section class="glass p-5 flex items-center gap-4 relative overflow-hidden">
         <div class="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(80% 140% at 0% 0%, oklch(0.55 0.2 ${inst().hue} / .35), transparent 60%)` }} />
-        <IconTile icon={inst().icon} hue={inst().hue} size={68} />
+        <InstanceIcon inst={inst()} size={68} />
         <div class="relative">
           <h1 class="text-[26px] font-bold tracking-tight">{inst().name}</h1>
           <div class="flex gap-1.5 mt-1.5">
@@ -89,6 +89,7 @@ export default function InstanceDetail() {
             {(m) => (
               <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--glass)] transition-colors" classList={{ "opacity-50": !m.enabled }}>
                 <Toggle on={m.enabled} onChange={(v) => set("mods", (x: any) => x.id === m.id, "enabled", v)} label={m.name} />
+                <ModIcon slug={m.slug} name={m.name} size={34} icon={m.hud ? "sparkles" : undefined} hue={m.hud ? 275 : undefined} />
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2">
                     <span class="font-semibold text-[13px]">{m.name}</span>

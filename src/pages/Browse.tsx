@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { Check, Download, ExternalLink, Heart, LayoutGrid, LoaderCircle, Rows3, Search, X } from "lucide-solid";
 import { IconTile } from "../components/Icons";
+import { projectMedia } from "../lib/media";
 import { AdSlot, Modal, PageHeader } from "../components/Shell";
 import { LOADER_LABEL, MC_VERSIONS, PROJECTS, fmt, type Project } from "../lib/mock";
 import { app, selectedInstance, setApp, setSettings, settings, toast } from "../lib/store";
@@ -42,12 +43,12 @@ function ProjectModal(props: { p: Project | null; onClose: () => void }) {
       <Show when={props.p}>
         {(p) => (
           <div>
-            <div class="h-28 relative" style={{ background: `linear-gradient(135deg, oklch(0.55 0.2 ${p().hue}), oklch(0.35 0.18 ${p().hue + 60}))` }}>
+            <div class="h-40 relative bg-cover bg-center" style={{ "background-image": projectMedia(p().slug)?.banner ? `linear-gradient(to bottom, transparent 55%, rgb(0 0 0 / .35)), url(${projectMedia(p().slug)!.banner})` : `linear-gradient(135deg, oklch(0.55 0.2 ${p().hue}), oklch(0.35 0.18 ${p().hue + 60}))` }}>
               <button class="btn btn-icon absolute top-3 right-3 !bg-black/30 !border-transparent text-white" onClick={props.onClose}><X size={16} /></button>
             </div>
             <div class="px-6 pb-6 -mt-8 relative">
               <div class="flex items-end gap-4">
-                <div class="p-1 rounded-2xl" style={{ background: "var(--bg)" }}><IconTile icon={p().icon} hue={p().hue} size={72} /></div>
+                <div class="p-1 rounded-2xl" style={{ background: "var(--bg)" }}><IconTile icon={p().icon} hue={p().hue} size={72} src={projectMedia(p().slug)?.icon} /></div>
                 <div class="pb-1 flex-1 min-w-0">
                   <h2 class="text-xl font-bold">{p().title}</h2>
                   <div class="text-muted text-[12.5px]">by {p().author} · {p().source === "modrinth" ? "Modrinth" : "CurseForge"}</div>
@@ -65,8 +66,15 @@ function ProjectModal(props: { p: Project | null; onClose: () => void }) {
                 <span class="chip">Server: {p().server}</span>
               </div>
               <p class="mt-4 text-[13.5px] leading-relaxed">{p().description}</p>
-              <p class="mt-2 text-muted text-[12.5px] leading-relaxed">
-                The full project description, gallery, versions list and changelog render here (sanitized markdown/HTML from the Modrinth API).
+              <Show when={(projectMedia(p().slug)?.gallery.length ?? 0) > 1}>
+                <div class="grid grid-cols-3 gap-2 mt-4">
+                  <For each={projectMedia(p().slug)!.gallery}>
+                    {(src) => <img src={src} alt="" class="rounded-xl aspect-video object-cover w-full" style={{ background: "var(--glass-strong)" }} />}
+                  </For>
+                </div>
+              </Show>
+              <p class="mt-3 text-muted text-[12.5px] leading-relaxed">
+                Full description, versions list and changelog render here (sanitized markdown from the Modrinth API).
               </p>
               <Show when={p().deps?.length}>
                 <div class="glass-flat p-3 mt-4 text-[12.5px]">
@@ -149,8 +157,8 @@ export default function Browse() {
               <For each={results()}>
                 {(p) => (
                   <div class="glass glass-hover lift overflow-hidden cursor-pointer flex flex-col" onClick={() => setOpen(p)}>
-                    <div class="h-20 relative" style={{ background: `linear-gradient(135deg, oklch(0.55 0.2 ${p.hue}), oklch(0.32 0.15 ${p.hue + 60}))` }}>
-                      <div class="absolute -bottom-5 left-4 p-0.5 rounded-xl" style={{ background: "var(--bg)" }}><IconTile icon={p.icon} hue={p.hue} size={44} /></div>
+                    <div class="h-24 relative bg-cover bg-center" style={{ "background-image": projectMedia(p.slug)?.banner ? `url(${projectMedia(p.slug)!.banner})` : `linear-gradient(135deg, oklch(0.55 0.2 ${p.hue}), oklch(0.32 0.15 ${p.hue + 60}))` }}>
+                      <div class="absolute -bottom-5 left-4 p-0.5 rounded-xl" style={{ background: "var(--bg)" }}><IconTile icon={p.icon} hue={p.hue} size={44} src={projectMedia(p.slug)?.icon} /></div>
                     </div>
                     <div class="p-4 pt-7 flex flex-col flex-1">
                       <div class="font-semibold">{p.title}</div>
@@ -173,7 +181,7 @@ export default function Browse() {
               <For each={results()}>
                 {(p) => (
                   <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--glass)] cursor-pointer transition-colors" onClick={() => setOpen(p)}>
-                    <IconTile icon={p.icon} hue={p.hue} size={36} />
+                    <IconTile icon={p.icon} hue={p.hue} size={36} src={projectMedia(p.slug)?.icon} />
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-2"><span class="font-semibold text-[13px]">{p.title}</span><span class="text-faint text-[11.5px]">by {p.author}</span></div>
                       <div class="text-muted text-[12px] truncate">{p.description}</div>

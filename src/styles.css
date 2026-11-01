@@ -79,32 +79,31 @@ body {
 
 ::selection { background: var(--accent-soft); }
 
-/* ---------- Animated aurora background (GPU transforms only) ---------- */
-.aurora {
+/* ---------- Night sky: static nebula glow + <Starfield> canvas ---------- */
+.sky {
   position: fixed;
   inset: 0;
-  overflow: hidden;
   z-index: 0;
   pointer-events: none;
-  background: var(--bg);
+  background:
+    radial-gradient(60vmax 45vmax at 12% -8%, color-mix(in oklch, var(--bg-a) 55%, transparent), transparent 70%),
+    radial-gradient(55vmax 40vmax at 100% 105%, color-mix(in oklch, var(--bg-b) 45%, transparent), transparent 70%),
+    radial-gradient(40vmax 30vmax at 55% 50%, color-mix(in oklch, var(--bg-c) 25%, transparent), transparent 70%),
+    var(--bg);
 }
-.aurora span {
-  position: absolute;
-  width: 70vmax;
-  height: 70vmax;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.55;
-  will-change: transform;
-}
-.aurora span:nth-child(1) { background: var(--bg-a); top: -30vmax; left: -20vmax; animation: drift1 26s ease-in-out infinite alternate; }
-.aurora span:nth-child(2) { background: var(--bg-b); bottom: -35vmax; right: -25vmax; animation: drift2 32s ease-in-out infinite alternate; }
-.aurora span:nth-child(3) { background: var(--bg-c); top: 20%; left: 35%; width: 45vmax; height: 45vmax; animation: drift3 38s ease-in-out infinite alternate; }
-.aurora.paused span { animation-play-state: paused; }
-@keyframes drift1 { to { transform: translate(18vmax, 12vmax) scale(1.15); } }
-@keyframes drift2 { to { transform: translate(-16vmax, -10vmax) scale(1.1); } }
-@keyframes drift3 { to { transform: translate(-14vmax, 10vmax) scale(0.85); } }
-@media (prefers-reduced-motion: reduce) { .aurora span { animation: none; } }
+.sky canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* ---------- Minecraft MOTD colors (§0–§f), darkened for the light theme ---------- */
+.mc-0 { color: #000000; } .mc-1 { color: #0000aa; } .mc-2 { color: #00aa00; } .mc-3 { color: #00aaaa; }
+.mc-4 { color: #aa0000; } .mc-5 { color: #aa00aa; } .mc-6 { color: #ffaa00; } .mc-7 { color: #aaaaaa; }
+.mc-8 { color: #555555; } .mc-9 { color: #5555ff; } .mc-a { color: #55ff55; } .mc-b { color: #55ffff; }
+.mc-c { color: #ff5555; } .mc-d { color: #ff55ff; } .mc-e { color: #ffff55; } .mc-f { color: #ffffff; }
+:root[data-theme="dark"] .mc-0, :root:not([data-theme]) .mc-0 { color: #3a3a3a; }
+:root[data-theme="light"] .mc-6 { color: #b06f00; } :root[data-theme="light"] .mc-7 { color: #6b6b6b; }
+:root[data-theme="light"] .mc-a { color: #1f9e1f; } :root[data-theme="light"] .mc-b { color: #0f8a8a; }
+:root[data-theme="light"] .mc-e { color: #9a8a00; } :root[data-theme="light"] .mc-f { color: var(--text); }
+:root[data-theme="light"] .mc-d { color: #b02cb0; } :root[data-theme="light"] .mc-9 { color: #3a3ad6; }
+.mc-obf { filter: blur(2px); }
 
 @layer components {
 /* ---------- Glass primitives ---------- */

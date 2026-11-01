@@ -2,7 +2,7 @@ import { useNavigate } from "@solidjs/router";
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { FileArchive, Gauge, Import, Plus, Search, Sparkles, Timer } from "lucide-solid";
-import { IconTile } from "../components/Icons";
+import { InstanceIcon } from "../components/Icons";
 import { Modal, PageHeader, Toggle } from "../components/Shell";
 import { LOADER_LABEL, MC_VERSIONS, PERF_STACK, type Instance, type Loader } from "../lib/mock";
 import { app, setApp, settings, toast } from "../lib/store";
@@ -184,7 +184,7 @@ export default function Instances() {
           {(i) => (
             <div class="glass glass-hover lift p-4 cursor-pointer flex flex-col gap-3.5" onClick={() => nav(`/instances/${i.id}`)}>
               <div class="flex items-center gap-3">
-                <IconTile icon={i.icon} hue={i.hue} size={48} />
+                <InstanceIcon inst={i} size={48} />
                 <div class="min-w-0 flex-1">
                   <div class="font-semibold text-[15px] truncate">{i.name}</div>
                   <div class="text-faint text-[12px]">{i.mcVersion} · {LOADER_LABEL[i.loader]} {i.loaderVersion}</div>

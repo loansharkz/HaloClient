@@ -1,9 +1,11 @@
 import { A, useNavigate } from "@solidjs/router";
-import { For, Show, createSignal, lazy, onCleanup } from "solid-js";
+import { For, Show, lazy } from "solid-js";
 import { ChevronRight, Clock, Gauge, LoaderCircle, Play, Power, Server as ServerIcon, ShieldCheck, Timer } from "lucide-solid";
-import { IconTile } from "../components/Icons";
+import { InstanceIcon } from "../components/Icons";
 import { AdSlot } from "../components/Shell";
-import { LOADER_LABEL, NEWS, SERVERS, fmt } from "../lib/mock";
+import { LOADER_LABEL, NEWS, RECENT_SERVERS, fmt } from "../lib/mock";
+import { projectMedia, serverMedia } from "../lib/media";
+import Motd from "../components/Motd";
 import { activeAccount, app, launchInstance, selectedInstance, setApp, toast } from "../lib/store";
 
 const SkinViewer = lazy(() => import("../components/SkinViewer"));
@@ -48,7 +50,7 @@ function Hero() {
           Ready to play · pre-flight passed
         </div>
         <div class="flex items-center gap-4 mt-4">
-          <IconTile icon={inst().icon} hue={inst().hue} size={64} />
+          <InstanceIcon inst={inst()} size={64} />
           <div>
             <h2 class="text-[34px] font-bold tracking-tight leading-none">{inst().name}</h2>
             <div class="flex gap-1.5 mt-2.5">
@@ -106,55 +108,66 @@ function Hero() {
 }
 
 function Servers() {
-  const [pinging, setPinging] = createSignal(false);
-  const t = setInterval(() => {
-    setPinging(true);
-    setTimeout(() => setPinging(false), 700);
-  }, 15000);
-  onCleanup(() => clearInterval(t));
+  const instName = (id: string) => app.instances.find((i) => i.id === id)?.name ?? "Unknown instance";
   return (
     <section class="glass p-5">
       <div class="flex items-center gap-2 mb-3">
         <ServerIcon size={16} class="text-accent" />
         <h3 class="font-semibold">Quick join</h3>
-        <Show when={pinging()}><LoaderCircle size={13} class="spin text-faint" /></Show>
         <div class="flex-1" />
-        <span class="text-faint text-[12px]">{selectedInstance().name}</span>
+        <span class="text-faint text-[12px]">Servers you played recently</span>
       </div>
-      <div class="flex flex-col gap-1.5">
-        <For each={SERVERS}>
-          {(s) => (
-            <div class="glass-flat glass-hover flex items-center gap-3 px-3 py-2.5 group">
-              <div class="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-[13px]" style={{ background: "var(--glass-strong)" }}>
-                {s.name.slice(0, 2).toUpperCase()}
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-semibold text-[13px]">{s.name}</span>
-                  <span class="chip" style={{ height: "18px", "font-size": "10px" }}>{s.tag}</span>
+      <Show
+        when={RECENT_SERVERS.length > 0}
+        fallback={<div class="glass-flat p-6 text-center text-muted text-[12.5px]">Servers you join show up here for one-click rejoin.</div>}
+      >
+        <div class="flex flex-col gap-1.5">
+          <For each={RECENT_SERVERS}>
+            {(s) => {
+              const live = serverMedia(s.address);
+              return (
+                <div class="glass-flat glass-hover flex items-center gap-3 px-3 py-2.5 group">
+                  <Show
+                    when={live?.icon}
+                    fallback={
+                      <div class="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center font-bold text-[14px]" style={{ background: "var(--glass-strong)" }}>
+                        {s.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    }
+                  >
+                    <img src={live!.icon} alt="" width={48} height={48} class="rounded-lg shrink-0" style={{ "image-rendering": "pixelated" }} />
+                  </Show>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <span class="font-semibold text-[13px]">{s.name}</span>
+                      <span class="chip" style={{ height: "18px", "font-size": "10px" }}>{s.tag}</span>
+                    </div>
+                    <Show when={live?.motd.length} fallback={<div class="text-faint text-[11.5px] mono truncate">{s.address}</div>}>
+                      <Motd lines={live!.motd} class="mono text-[11px] leading-[1.35] mt-0.5" />
+                    </Show>
+                    <div class="text-faint text-[11px] mt-0.5">{s.lastPlayed} · {instName(s.instanceId)}</div>
+                  </div>
+                  <Show when={live?.players}>
+                    <div class="text-right text-[11.5px] shrink-0">
+                      <div class="font-semibold">{fmt(live!.players!.online)}</div>
+                      <div class="text-faint">online</div>
+                    </div>
+                  </Show>
+                  <button
+                    class="btn btn-primary h-8 px-3 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                    onClick={() => {
+                      toast(`Launching ${instName(s.instanceId)} → ${s.address}`, "info");
+                      launchInstance(s.instanceId);
+                    }}
+                  >
+                    Join
+                  </button>
                 </div>
-                <div class="text-faint text-[11.5px] truncate">{s.motd}</div>
-              </div>
-              <div class="text-right text-[11.5px]">
-                <div class="font-semibold">{fmt(s.players)} <span class="text-faint font-normal">online</span></div>
-                <div class="flex items-center gap-1 justify-end text-faint">
-                  <span class="ping-dot" style={{ background: s.ping < 60 ? "var(--ok)" : "var(--warn)" }} />
-                  {s.ping}ms
-                </div>
-              </div>
-              <button
-                class="btn btn-primary h-8 px-3 opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={() => {
-                  toast(`Launching ${selectedInstance().name} → ${s.address} (quickPlayMultiplayer)`, "info");
-                  launchInstance(selectedInstance().id);
-                }}
-              >
-                Join
-              </button>
-            </div>
-          )}
-        </For>
-      </div>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
     </section>
   );
 }
@@ -172,7 +185,12 @@ function News() {
           {(n, i) => (
             <>
               <article class="glass-flat glass-hover flex gap-3 p-3 cursor-pointer">
-                <div class="w-16 h-16 rounded-xl shrink-0" style={{ background: `linear-gradient(135deg, oklch(0.6 0.18 ${n.hue}), oklch(0.4 0.18 ${n.hue + 60}))` }} />
+                <Show
+                  when={projectMedia(n.imageProject)?.banner}
+                  fallback={<div class="w-16 h-16 rounded-xl shrink-0" style={{ background: `linear-gradient(135deg, oklch(0.6 0.18 ${n.hue}), oklch(0.4 0.18 ${n.hue + 60}))` }} />}
+                >
+                  <img src={projectMedia(n.imageProject)!.banner} alt="" class="w-24 h-16 rounded-xl shrink-0 object-cover" />
+                </Show>
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 text-[11px]">
                     <span class="chip chip-accent" style={{ height: "18px" }}>{n.tag}</span>
@@ -213,7 +231,7 @@ export default function Home() {
                 onDblClick={() => nav(`/instances/${i.id}`)}
               >
                 <div class="flex items-center gap-3">
-                  <IconTile icon={i.icon} hue={i.hue} size={40} />
+                  <InstanceIcon inst={i} size={40} />
                   <div class="min-w-0">
                     <div class="font-semibold truncate">{i.name}</div>
                     <div class="text-faint text-[11.5px]">{i.mcVersion} · {LOADER_LABEL[i.loader]}</div>

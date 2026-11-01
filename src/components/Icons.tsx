@@ -1,7 +1,10 @@
+import { Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import {
   Apple, Atom, Book, Box, Coins, EyeOff, FlaskConical, Hammer, List, Map, Package, Rocket, Sparkles, Swords, Zap,
 } from "lucide-solid";
+import { projectMedia, serverMedia } from "../lib/media";
+import type { Instance } from "../lib/mock";
 
 const ICONS = {
   swords: Swords, coins: Coins, package: Package, box: Box, flask: FlaskConical, hammer: Hammer,
@@ -9,7 +12,29 @@ const ICONS = {
 } as const;
 
 /** Gradient tile with an icon: used for instance + project icons (no Mojang assets). */
-export function IconTile(props: { icon: string; hue: number; size?: number; radius?: number }) {
+export function IconTile(props: { icon: string; hue: number; size?: number; radius?: number; src?: string; pixel?: boolean }) {
+  const size = () => props.size ?? 44;
+  return (
+    <Show when={props.src} fallback={<GradientTile {...props} />}>
+      <img
+        src={props.src}
+        alt=""
+        draggable={false}
+        class="shrink-0 object-cover"
+        style={{
+          width: `${size()}px`,
+          height: `${size()}px`,
+          "border-radius": `${props.radius ?? Math.round(size() * 0.28)}px`,
+          "image-rendering": props.pixel ? "pixelated" : "auto",
+          background: "var(--glass-strong)",
+          "box-shadow": "0 4px 14px rgb(0 0 0 / .25)",
+        }}
+      />
+    </Show>
+  );
+}
+
+function GradientTile(props: { icon: string; hue: number; size?: number; radius?: number }) {
   const size = () => props.size ?? 44;
   return (
     <div
@@ -44,4 +69,15 @@ export function HaloLogo(props: { size?: number }) {
       <circle cx="32" cy="32" r="3" fill="var(--text)" />
     </svg>
   );
+}
+
+/** Instance icon: the server's real favicon when the instance is tied to one, else a gradient tile. */
+export function InstanceIcon(props: { inst: Instance; size?: number }) {
+  return <IconTile icon={props.inst.icon} hue={props.inst.hue} size={props.size} src={serverMedia(props.inst.iconServer)?.icon} pixel />;
+}
+
+/** Mod/project icon from Modrinth, else a tile tinted from the name. */
+export function ModIcon(props: { slug?: string; name: string; size?: number; icon?: string; hue?: number }) {
+  const hue = () => props.hue ?? [...props.name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  return <IconTile icon={props.icon ?? "package"} hue={hue()} size={props.size} src={projectMedia(props.slug)?.icon} />;
 }
