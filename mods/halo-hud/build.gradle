@@ -1,0 +1,42 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base {
+	archivesName = "halo-hud"
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+processResources {
+	def props = [version: project.version, minecraft_version: project.minecraft_version, loader_version: project.loader_version]
+	inputs.properties props
+	filesMatching("fabric.mod.json") {
+		expand props
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+// Writes the metadata file the launcher reads to know which versions this build supports.
+tasks.register('haloManifest') {
+	def out = layout.buildDirectory.file("libs/halo-hud.json")
+	def ver = project.version
+	def mc = project.minecraft_version
+	outputs.file out
+	doLast {
+		out.get().asFile.text = groovy.json.JsonOutput.toJson([version: ver, minecraft: [mc], file: "halo-hud-${ver}.jar".toString()])
+	}
+}
+build.finalizedBy haloManifest

@@ -91,7 +91,7 @@ export default function Starfield() {
       meteors = meteors.filter((m) => m.life > 0 && m.x > -m.len && m.y < h + m.len);
     }
 
-    const animating = () => settings.animatedBackground && !reduced.matches && !document.hidden && app.launch.phase !== "running";
+    const animating = () => settings.animatedBackground && !reduced.matches && !document.hidden && !Object.values(app.launch).some((l) => l?.phase === "running");
 
     function frame(now: number) {
       const dt = Math.min(50, now - last);
@@ -128,7 +128,7 @@ export default function Starfield() {
       settings.animatedBackground;
       settings.theme;
       settings.accentHue;
-      app.launch.phase;
+      Object.values(app.launch).map((l) => l?.phase);
       sync();
     });
 

@@ -1,9 +1,9 @@
-import { For, type JSX } from "solid-js";
-import { Bug, Download, Gamepad2, Info, Palette, RefreshCw } from "lucide-solid";
+import { For, Show, createSignal, type JSX } from "solid-js";
+import { Bug, FolderOpen, Gamepad2, HardDrive, Info, KeyRound, LoaderCircle, Palette, RefreshCw } from "lucide-solid";
 import { HaloLogo } from "../components/Icons";
 import { PageHeader, Toggle } from "../components/Shell";
-import { APP_VERSION } from "../lib/config";
-import { setSettings, settings, toast } from "../lib/store";
+import { api, pickFile } from "../lib/api";
+import { app, attempt, setSettings, settings, toast } from "../lib/store";
 
 const ACCENTS = [
   { name: "Violet", h: 275 },
@@ -14,12 +14,12 @@ const ACCENTS = [
   { name: "Ember", h: 30 },
 ];
 
-function Row(props: { title: string; desc?: string; children: JSX.Element }) {
+function Row(props: { title: string; desc?: JSX.Element; children: JSX.Element }) {
   return (
     <div class="flex items-center gap-4 py-3 border-b last:border-0" style={{ "border-color": "var(--border)" }}>
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[13.5px]">{props.title}</div>
-        {props.desc && <div class="text-faint text-[12px] mt-0.5">{props.desc}</div>}
+        <Show when={props.desc}><div class="text-faint text-[12px] mt-0.5">{props.desc}</div></Show>
       </div>
       {props.children}
     </div>
@@ -36,6 +36,21 @@ function Section(props: { title: string; icon: any; children: JSX.Element }) {
 }
 
 export default function Settings() {
+  const [checking, setChecking] = createSignal(false);
+  async function checkUpdate() {
+    setChecking(true);
+    const r = await attempt(() => api.checkUpdate());
+    setChecking(false);
+    if (!r) return;
+    if (r.available && r.url) toast(`Halo Client ${r.latest} is available`, "info", { label: "Download", run: () => api.openUrl(r.url!) });
+    else toast(r.latest ? "You're on the latest version" : "No release information yet", "ok");
+  }
+  async function moveData() {
+    const p = await pickFile({ title: "New data folder", directory: true });
+    if (!p) return;
+    if ((await attempt(() => api.setDataDir(p))) !== undefined) toast("Restart Halo Client to use the new data folder. Move your files there first to keep them.", "info");
+  }
+
   return (
     <div class="page-enter pb-2">
       <PageHeader title="Settings" />
@@ -54,11 +69,9 @@ export default function Settings() {
                   {(a) => (
                     <button
                       title={a.name}
+                      aria-label={a.name}
                       class="w-6 h-6 rounded-full cursor-pointer transition-transform hover:scale-110"
-                      style={{
-                        background: `linear-gradient(135deg, oklch(0.7 0.2 ${a.h}), oklch(0.6 0.22 ${a.h + 60}))`,
-                        "box-shadow": settings.accentHue === a.h ? "0 0 0 2px var(--bg), 0 0 0 4px var(--accent)" : "none",
-                      }}
+                      style={{ background: `linear-gradient(135deg, oklch(0.7 0.2 ${a.h}), oklch(0.6 0.22 ${a.h + 60}))`, "box-shadow": settings.accentHue === a.h ? "0 0 0 2px var(--bg), 0 0 0 4px var(--accent)" : "none" }}
                       onClick={() => setSettings("accentHue", a.h)}
                     />
                   )}
@@ -66,45 +79,57 @@ export default function Settings() {
               </div>
             </Row>
             <Row title="Custom hue" desc={`${settings.accentHue}°`}>
-              <input type="range" min={0} max={359} value={settings.accentHue} class="!w-40" onInput={(e) => setSettings("accentHue", +e.currentTarget.value)} />
+              <input id="set-hue" type="range" min={0} max={359} value={settings.accentHue} class="!w-40" onInput={(e) => setSettings("accentHue", +e.currentTarget.value)} aria-label="Accent hue" />
             </Row>
-            <Row title="Animated background" desc="Pauses automatically while the game runs">
-              <Toggle on={settings.animatedBackground} onChange={(v) => setSettings("animatedBackground", v)} />
+            <Row title="Shooting stars" desc="Animated sky. Pauses while the game runs or the window is hidden.">
+              <Toggle on={settings.animatedBackground} onChange={(v) => setSettings("animatedBackground", v)} label="Animated background" />
             </Row>
           </Section>
 
           <Section title="Game & performance" icon={Gamepad2}>
             <Row title="Default memory" desc={`${(settings.defaultRamMb / 1024).toFixed(1)} GB for new instances`}>
-              <input type="range" min={1024} max={16384} step={512} value={settings.defaultRamMb} class="!w-40" onInput={(e) => setSettings("defaultRamMb", +e.currentTarget.value)} />
+              <input id="set-ram" type="range" min={1024} max={16384} step={512} value={settings.defaultRamMb} class="!w-40" onInput={(e) => setSettings("defaultRamMb", +e.currentTarget.value)} aria-label="Default memory" />
             </Row>
-            <Row title="Manage Java automatically" desc="Downloads the right Adoptium runtime per version">
-              <Toggle on={settings.autoJava} onChange={(v) => setSettings("autoJava", v)} />
+            <Row title="Manage Java automatically" desc="Downloads the right Adoptium runtime per Minecraft version, verified by SHA-256">
+              <Toggle on={settings.autoJava} onChange={(v) => setSettings("autoJava", v)} label="Manage Java" />
             </Row>
-            <Row title="Pre-flight on open" desc="Refresh tokens & verify the last instance in the background so Play is instant">
-              <Toggle on={settings.preflight} onChange={(v) => setSettings("preflight", v)} />
+            <Row title="Pre-flight on open" desc="Refreshes your login and checks the last instance in the background, so Play starts right away">
+              <Toggle on={settings.preflight} onChange={(v) => setSettings("preflight", v)} label="Pre-flight" />
             </Row>
-            <Row title="Close launcher on game start">
-              <Toggle on={settings.closeOnLaunch} onChange={(v) => setSettings("closeOnLaunch", v)} />
+            <Row title="Hide launcher while playing">
+              <Toggle on={settings.closeOnLaunch} onChange={(v) => setSettings("closeOnLaunch", v)} label="Hide launcher" />
             </Row>
-            <Row title="Discord Rich Presence">
-              <Toggle on={settings.discordRpc} onChange={(v) => setSettings("discordRpc", v)} />
+            <Row title="Discord Rich Presence" desc={app.info?.discord === false ? "Not included in this build" : "Shows what you're playing on Discord"}>
+              <Toggle on={settings.discordRpc && app.info?.discord !== false} disabled={app.info?.discord === false} onChange={(v) => setSettings("discordRpc", v)} label="Discord Rich Presence" />
             </Row>
           </Section>
         </div>
 
         <div class="flex flex-col gap-4">
-          <Section title="Downloads" icon={Download}>
-            <Row title="Parallel downloads" desc={`${settings.downloadThreads} threads`}>
-              <input type="range" min={2} max={32} value={settings.downloadThreads} class="!w-40" onInput={(e) => setSettings("downloadThreads", +e.currentTarget.value)} />
+          <Section title="Downloads & storage" icon={HardDrive}>
+            <Row title="Parallel downloads" desc={`${settings.downloadThreads} at once`}>
+              <input id="set-threads" type="range" min={2} max={32} value={settings.downloadThreads} class="!w-40" onInput={(e) => setSettings("downloadThreads", +e.currentTarget.value)} aria-label="Parallel downloads" />
             </Row>
-            <Row title="Data folder" desc="%APPDATA%\HaloClient">
-              <button class="btn h-8" onClick={() => toast("Folder picker opens in the real app", "info")}>Change</button>
+            <Row title="Data folder" desc={<span class="mono break-all">{app.info?.dataDir}</span>}>
+              <div class="flex gap-1.5">
+                <button class="btn h-8" onClick={() => app.info && attempt(() => api.openPath(app.info!.dataDir))}><FolderOpen size={14} /></button>
+                <button class="btn h-8" onClick={moveData}>Change</button>
+              </div>
             </Row>
           </Section>
 
           <Section title="Privacy" icon={Bug}>
-            <Row title="Send crash reports" desc="Anonymous launcher crash reports via Sentry. Never includes tokens, usernames or your files.">
-              <Toggle on={settings.crashReports} onChange={(v) => setSettings("crashReports", v)} />
+            <Row title="Send crash reports" desc={app.info?.sentry ? "Anonymous launcher crash reports. Never your username, tokens or files. Takes effect after a restart." : "Crash reporting isn't included in this build"}>
+              <Toggle on={settings.crashReports} disabled={!app.info?.sentry} onChange={(v) => setSettings({ crashReports: v, crashReportsPrompted: true })} label="Crash reports" />
+            </Row>
+          </Section>
+
+          <Section title="Advanced" icon={KeyRound}>
+            <Row title="Azure app client ID" desc="Only for developers testing their own Azure app. Leave empty to use the built-in one.">
+              <input id="set-msa" class="input w-48 mono text-[12px]" placeholder={app.info?.msaConfigured ? "Built-in" : "Not configured"} value={settings.msaClientId ?? ""} onChange={(e) => setSettings("msaClientId", e.currentTarget.value.trim() || null)} />
+            </Row>
+            <Row title="Show reserved ad slots" desc="Dev preview of future layout slots (ADS_ENABLED=false)">
+              <Toggle on={settings.showReservedSlots} onChange={(v) => setSettings("showReservedSlots", v)} label="Show reserved slots" />
             </Row>
           </Section>
 
@@ -113,16 +138,21 @@ export default function Settings() {
               <HaloLogo size={40} />
               <div class="flex-1">
                 <div class="font-bold">Halo Client</div>
-                <div class="text-faint text-[12px]">Version {APP_VERSION} · not affiliated with Mojang or Microsoft</div>
+                <div class="text-faint text-[12px]">Version {app.info?.version} · Not affiliated with Mojang or Microsoft</div>
               </div>
-              <button class="btn h-8" onClick={() => toast("You're on the latest version", "ok")}><RefreshCw size={14} /> Check for updates</button>
+              <button class="btn h-8" disabled={checking()} onClick={checkUpdate}>
+                <Show when={checking()} fallback={<RefreshCw size={14} />}><LoaderCircle size={14} class="spin" /></Show> Check for updates
+              </button>
             </div>
-            <Row title="Show reserved ad slots" desc="Dev preview of future layout slots (ADS_ENABLED=false)">
-              <Toggle on={settings.showReservedSlots} onChange={(v) => setSettings("showReservedSlots", v)} />
-            </Row>
+            <div class="flex flex-wrap gap-1.5 pb-3">
+              <span class="chip">Microsoft login {app.info?.msaConfigured ? "ready" : "not configured"}</span>
+              <span class="chip">CurseForge {app.info?.curseforge ? "on" : "off"}</span>
+              <span class="chip">Halo HUD {app.info?.hud ? `${app.info.hud.version} (${app.info.hud.minecraft.join(", ")})` : "not bundled"}</span>
+            </div>
           </Section>
         </div>
       </div>
     </div>
   );
 }
+

@@ -1,25 +1,9 @@
-import { createEffect } from "solid-js";
-import { createStore } from "solid-js/store";
-import { ACCOUNTS, INSTANCES, type Account, type Instance } from "./mock";
+import { createEffect, on as onChange } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
+import { api, on } from "./api";
+import type * as T from "./types";
 
-export type ThemeMode = "dark" | "light";
-
-export interface Settings {
-  theme: ThemeMode;
-  accentHue: number;
-  animatedBackground: boolean;
-  defaultRamMb: number;
-  downloadThreads: number;
-  closeOnLaunch: boolean;
-  discordRpc: boolean;
-  crashReports: boolean;
-  autoJava: boolean;
-  preflight: boolean;
-  showReservedSlots: boolean;
-  browseView: "grid" | "list";
-}
-
-const DEFAULTS: Settings = {
+const DEFAULT_SETTINGS: T.Settings = {
   theme: "dark",
   accentHue: 275,
   animatedBackground: true,
@@ -28,90 +12,208 @@ const DEFAULTS: Settings = {
   closeOnLaunch: false,
   discordRpc: true,
   crashReports: true,
+  crashReportsPrompted: true,
   autoJava: true,
   preflight: true,
   showReservedSlots: false,
-  browseView: "grid",
+  browseView: "list",
+  activeAccountId: null,
+  lastInstanceId: null,
+  msaClientId: null,
 };
 
-const KEY = "halo.settings.v1";
+export const [settings, setSettings] = createStore<T.Settings>({ ...DEFAULT_SETTINGS });
 
-function load(): Settings {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {
-    /* private mode / blocked storage: fall back to defaults */
-  }
-  return { ...DEFAULTS };
+interface LaunchInfo {
+  phase: T.LaunchState["phase"];
+  message: string;
 }
 
-export const [settings, setSettings] = createStore<Settings>(load());
-
-export function initThemeSync() {
-  createEffect(() => {
-    const root = document.documentElement;
-    root.dataset.theme = settings.theme;
-    root.style.setProperty("--accent-h", String(settings.accentHue));
-    try {
-      localStorage.setItem(KEY, JSON.stringify(settings));
-    } catch {
-      /* ignore */
-    }
-  });
+interface Toast {
+  id: number;
+  text: string;
+  kind: "ok" | "info" | "warn";
+  action?: { label: string; run: () => void };
 }
 
-// ---- App state (mock until the Rust backend lands) ----
 interface AppState {
-  accounts: Account[];
-  activeAccountId: string;
-  instances: Instance[];
-  selectedInstanceId: string;
-  launch: { instanceId: string | null; phase: "idle" | "preflight" | "launching" | "running"; progress: number; startedAt: number; bootMs: number | null };
-  toasts: { id: number; text: string; kind: "ok" | "info" | "warn" }[];
+  ready: boolean;
+  info: T.AppInfo | null;
+  accounts: T.Account[];
+  activeAccountId: string | null;
+  instances: T.Instance[];
+  selectedInstanceId: string | null;
+  recentServers: T.RecentServer[];
+  serverStatus: Record<string, T.ServerStatus | undefined>;
+  launch: Record<string, LaunchInfo | undefined>;
+  tasks: Record<string, T.TaskProgress | undefined>;
+  logs: Record<string, string[] | undefined>;
+  toasts: Toast[];
+  exit: T.GameExit | null;
+  preflight: T.Preflight | null;
 }
 
 export const [app, setApp] = createStore<AppState>({
-  accounts: ACCOUNTS,
-  activeAccountId: ACCOUNTS[0].id,
-  instances: INSTANCES,
-  selectedInstanceId: INSTANCES[0].id,
-  launch: { instanceId: null, phase: "idle", progress: 0, startedAt: 0, bootMs: null },
+  ready: false,
+  info: null,
+  accounts: [],
+  activeAccountId: null,
+  instances: [],
+  selectedInstanceId: null,
+  recentServers: [],
+  serverStatus: {},
+  launch: {},
+  tasks: {},
+  logs: {},
   toasts: [],
+  exit: null,
+  preflight: null,
 });
 
-export const activeAccount = () => app.accounts.find((a) => a.id === app.activeAccountId) ?? app.accounts[0];
-export const selectedInstance = () => app.instances.find((i) => i.id === app.selectedInstanceId) ?? app.instances[0];
+export const activeAccount = () => app.accounts.find((a) => a.id === app.activeAccountId) ?? app.accounts[0] ?? null;
+export const selectedInstance = () => app.instances.find((i) => i.id === app.selectedInstanceId) ?? app.instances[0] ?? null;
+export const instanceById = (id: string) => app.instances.find((i) => i.id === id) ?? null;
+export const isBusy = (id: string) => {
+  const p = app.launch[id]?.phase;
+  return p === "preparing" || p === "running";
+};
 
 let toastId = 0;
-export function toast(text: string, kind: "ok" | "info" | "warn" = "info") {
+export function toast(text: string, kind: Toast["kind"] = "info", action?: Toast["action"]) {
   const id = ++toastId;
-  setApp("toasts", (t) => [...t, { id, text, kind }]);
-  setTimeout(() => setApp("toasts", (t) => t.filter((x) => x.id !== id)), 3400);
+  setApp("toasts", (t) => [...t.slice(-3), { id, text, kind, action }]);
+  setTimeout(() => setApp("toasts", (t) => t.filter((x) => x.id !== id)), action ? 8000 : 4200);
 }
 
-/** Mock launch sequence: preflight → launching (progress) → running. */
-export function launchInstance(id: string) {
-  if (app.launch.phase !== "idle") {
-    if (app.launch.phase === "running" && app.launch.instanceId === id) {
-      setApp("launch", { instanceId: null, phase: "idle", progress: 0 });
-      toast("Game closed", "info");
-    }
+/** Runs an API call and turns failures into a toast. Returns undefined on error. */
+export async function attempt<R>(fn: () => Promise<R>, okText?: string): Promise<R | undefined> {
+  try {
+    const r = await fn();
+    if (okText) toast(okText, "ok");
+    return r;
+  } catch (e) {
+    toast(typeof e === "string" ? e : e instanceof Error ? e.message : String(e), "warn");
+    return undefined;
+  }
+}
+
+export async function refreshInstances() {
+  const list = await api.listInstances();
+  setApp("instances", reconcile(list, { key: "id" }));
+  if (!app.selectedInstanceId || !list.some((i) => i.id === app.selectedInstanceId)) {
+    setApp("selectedInstanceId", settings.lastInstanceId && list.some((i) => i.id === settings.lastInstanceId) ? settings.lastInstanceId : list[0]?.id ?? null);
+  }
+}
+
+export async function refreshAccounts() {
+  const { accounts, activeId } = await api.listAccounts();
+  setApp({ accounts, activeAccountId: activeId });
+}
+
+export async function refreshRecentServers() {
+  setApp("recentServers", await api.recentServers());
+}
+
+const pinging = new Set<string>();
+export async function pingServer(address: string, force = false) {
+  if (pinging.has(address) || (!force && app.serverStatus[address])) return;
+  pinging.add(address);
+  try {
+    setApp("serverStatus", address, await api.pingServer(address));
+  } finally {
+    pinging.delete(address);
+  }
+}
+
+export async function launchInstance(id: string, server?: string | null) {
+  if (app.launch[id]?.phase === "running") {
+    await attempt(() => api.stop(id));
     return;
   }
-  const inst = app.instances.find((i) => i.id === id);
-  setApp("launch", { instanceId: id, phase: "preflight", progress: 0, startedAt: performance.now(), bootMs: null });
-  setTimeout(() => {
-    setApp("launch", "phase", "launching");
-    const t = setInterval(() => {
-      setApp("launch", "progress", (p) => Math.min(100, p + 7 + Math.random() * 9));
-      if (app.launch.progress >= 100) {
-        clearInterval(t);
-        const boot = inst?.lastBootMs ?? 4200;
-        setApp("launch", { phase: "running", bootMs: boot });
-        setApp("instances", (i) => i.id === id, "lastPlayed", "Just now");
-        toast(`${inst?.name ?? "Instance"} reached title screen in ${(boot / 1000).toFixed(1)}s`, "ok");
-      }
-    }, 90);
-  }, 450);
+  if (isBusy(id)) return;
+  if (!app.accounts.length) {
+    toast("Add an account first", "warn");
+    return;
+  }
+  setApp("launch", id, { phase: "preparing", message: "Starting" });
+  setApp("logs", id, []);
+  try {
+    await api.launch(id, server);
+  } catch (e) {
+    setApp("launch", id, { phase: "error", message: String(e) });
+    toast(String(e), "warn");
+  }
+}
+
+export async function setActiveAccount(id: string) {
+  await attempt(() => api.setActiveAccount(id));
+  setApp("activeAccountId", id);
+}
+
+/** Loads everything from the backend and subscribes to events. Call once. */
+export async function init() {
+  const root = document.documentElement;
+  createEffect(() => {
+    root.dataset.theme = settings.theme;
+    root.style.setProperty("--accent-h", String(settings.accentHue));
+  });
+
+  try {
+    const [s, info] = await Promise.all([api.getSettings(), api.appInfo()]);
+    setSettings(reconcile({ ...DEFAULT_SETTINGS, ...s }));
+    setApp("info", info);
+  } catch (e) {
+    toast(`Couldn't load settings: ${e}`, "warn");
+  }
+  await Promise.all([refreshAccounts(), refreshInstances(), refreshRecentServers()]).catch((e) => toast(String(e), "warn"));
+  for (const id of await api.running().catch(() => [] as string[])) setApp("launch", id, { phase: "running", message: "Game running" });
+  setApp("ready", true);
+
+  // Persist settings (debounced) whenever they change after load.
+  let t: ReturnType<typeof setTimeout> | undefined;
+  createEffect(
+    onChange(
+      () => JSON.stringify(settings),
+      () => {
+        clearTimeout(t);
+        t = setTimeout(() => api.saveSettings({ ...settings }).catch(() => {}), 300);
+      },
+      { defer: true },
+    ),
+  );
+
+  on<T.TaskProgress>("task-progress", (p) => {
+    setApp("tasks", p.task, p);
+    if (p.total > 0 && p.done >= p.total) setTimeout(() => setApp("tasks", p.task, undefined), 900);
+  });
+  on<T.LaunchState>("launch-state", (s) => {
+    setApp("launch", s.instanceId, { phase: s.phase, message: s.message });
+    if (s.phase === "running") setApp("instances", (i) => i.id === s.instanceId, "running", true);
+    if (s.phase === "stopped") setApp("instances", (i) => i.id === s.instanceId, "running", false);
+  });
+  on<{ instanceId: string; lines: string[] }>("game-log", (l) => {
+    setApp("logs", l.instanceId, (old) => {
+      const next = [...(old ?? []), ...l.lines];
+      return next.length > 5000 ? next.slice(-5000) : next;
+    });
+  });
+  on<{ instanceId: string; bootMs: number }>("game-boot", (b) => {
+    setApp("instances", (i) => i.id === b.instanceId, "lastBootMs", b.bootMs);
+    toast(`${instanceById(b.instanceId)?.name ?? "Game"} reached the title screen in ${(b.bootMs / 1000).toFixed(1)}s`, "ok");
+  });
+  on<T.GameExit>("game-exit", (e) => {
+    if (e.crash) setApp("exit", e);
+    refreshInstances();
+  });
+  on("recent-servers-changed", () => refreshRecentServers());
+
+  if (settings.preflight) {
+    api
+      .preflight()
+      .then((p) => {
+        setApp("preflight", p);
+        if (!p.accountOk && p.accountMessage && app.accounts.length) toast(p.accountMessage, "warn");
+      })
+      .catch(() => {});
+  }
 }
