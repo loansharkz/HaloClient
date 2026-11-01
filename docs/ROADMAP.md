@@ -2,12 +2,18 @@
 
 | # | Phase | Status |
 |---|---|---|
-| 0 | **UI mockup** (SolidJS, mock data) for Leo's approval | ✅ built, awaiting approval |
-| 1 | Foundation: Tauri v2 shell, frameless window, settings store, parallel hash-verified downloader + content-addressed cache, Adoptium Java management | ⏳ |
-| 2 | Vanilla launch: version manifest, libraries/assets/natives, MSA device-code → XBL → XSTS → MC auth, keychain token store, offline profiles, launch + join a real server | ⏳ |
-| 3 | Loaders + instances: Fabric/Quilt meta, Forge/NeoForge installers, instance CRUD, live logs, crash analyzer, Prism/MultiMC/.minecraft import | ⏳ |
-| 4 | Content browser: Modrinth (search, project page, dependency resolution, updates, .mrpack import/export), CurseForge behind key, shaders/Iris detection | ⏳ |
-| 5 | Performance: AppCDS per instance, tuned JVM flags, Performance profile, launch timer, `BENCHMARKS.md` | ⏳ |
-| 6 | Polish: Discord RPC, quick-join (`--quickPlayMultiplayer`), skin/cape changer, screenshot gallery, Sentry (opt-out), self-updater, MSI/NSIS via Actions | ⏳ |
-| 6b | **Halo HUD** companion Fabric mod (latest MC): FPS/CPS/ping, keystrokes, zoom, armor/potion HUD | ⏳ |
-| 7 | Ads: only when Leo says go | 🚫 design-only |
+| 0 | UI mockup | ✅ approved |
+| 1 | Foundation: Tauri v2 shell, frameless window, settings, parallel hash-verified downloader + shared cache, Adoptium Java | ✅ built, unit-tested |
+| 2 | Vanilla launch: manifest, libraries/assets/natives, Microsoft multi-account auth, offline profiles | ✅ built; needs Azure app + real-account test |
+| 3 | Loaders + instances: Fabric/Quilt/Forge/NeoForge, instance management, logs, crash analyzer, imports | ✅ built; needs Windows test |
+| 4 | Content: Modrinth (full), CurseForge (behind key), dependencies, updates, .mrpack import/export, shaders, data packs | ✅ built |
+| 5 | Performance: tuned G1, AppCDS (real-JVM tested), Performance profile, boot timer | ✅ built; benchmarks pending (docs/BENCHMARKS.md) |
+| 6 | Polish: Discord RPC, quick join, skins/capes, screenshots, Sentry opt-out, update check, MSI/NSIS via Actions | ✅ built |
+| 6b | Halo HUD mod (26.3) | ✅ written; compiled by CI |
+| 7 | Ads | 🚫 design-only until Leo says go |
+
+## Next up (after first Windows test)
+- Run docs/MULTIPLAYER_TESTS.md and docs/BENCHMARKS.md, then log the results.
+- Switch to Tauri's signed auto-updater (generate a signing key, add `plugins.updater`).
+- CurseForge `.zip` modpack import (needs the API key).
+- Landing page + domain.

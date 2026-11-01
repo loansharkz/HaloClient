@@ -179,7 +179,7 @@ async fn install_forge_like(dl: &Downloader<'_>, java: &Path, loader: &str, mc: 
     // Verify the installer against the .sha1 the maven publishes next to it.
     let sha1 = dl.http.get(format!("{url}.sha1")).send().await.ok().filter(|r| r.status().is_success());
     let sha1 = match sha1 {
-        Some(r) => r.text().await.ok().map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string()).filter(|s| s.len() == 40),
+        Some(r) => r.text().await.ok().map(|s| s.split_whitespace().next().unwrap_or("").to_string()).filter(|s| s.len() == 40),
         None => None,
     };
     dl.run("loader", &format!("Downloading {} installer", title(loader)), vec![DlItem::new(url.clone(), installer.clone()).sha1(sha1)])

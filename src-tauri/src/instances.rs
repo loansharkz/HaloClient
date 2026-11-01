@@ -283,10 +283,12 @@ pub fn read_mod_info(jar: &Path) -> Option<(String, Option<String>)> {
         let l = &v["quilt_loader"];
         return Some((l["metadata"]["name"].as_str().or(l["id"].as_str())?.to_string(), l["version"].as_str().map(String::from)));
     }
+    static NAME_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r#"(?m)^\s*displayName\s*=\s*"([^"]+)""#).unwrap());
+    static VER_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r#"(?m)^\s*version\s*=\s*"([^"]+)""#).unwrap());
     for toml in ["META-INF/neoforge.mods.toml", "META-INF/mods.toml"] {
         if let Some(s) = read(toml) {
-            let name = regex::Regex::new(r#"(?m)^\s*displayName\s*=\s*"([^"]+)""#).ok()?.captures(&s).map(|c| c[1].to_string());
-            let ver = regex::Regex::new(r#"(?m)^\s*version\s*=\s*"([^"]+)""#).ok()?.captures(&s).map(|c| c[1].to_string()).filter(|v| !v.contains("${"));
+            let name = NAME_RE.captures(&s).map(|c| c[1].to_string());
+            let ver = VER_RE.captures(&s).map(|c| c[1].to_string()).filter(|v| !v.contains("${"));
             if let Some(n) = name {
                 return Some((n, ver));
             }

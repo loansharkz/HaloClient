@@ -65,12 +65,7 @@ fn exe_name() -> &'static str {
 
 /// Finds `bin/<java>` inside an extracted runtime (handles macOS Contents/Home).
 fn find_exe(dir: &Path) -> Option<PathBuf> {
-    for candidate in [dir.join("bin").join(exe_name()), dir.join("Contents/Home/bin").join(exe_name())] {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    [dir.join("bin").join(exe_name()), dir.join("Contents/Home/bin").join(exe_name())].into_iter().find(|c| c.is_file())
 }
 
 /// Which Java a Minecraft version needs. Old versions say nothing (Java 8).

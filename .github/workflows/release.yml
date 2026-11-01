@@ -1,0 +1,72 @@
+name: Release
+# Push a tag like v0.1.0 to build signed-off Windows installers into a draft GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  halo-hud:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mods/halo-hud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: 25
+      - run: chmod +x gradlew && ./gradlew build
+      - name: Keep only the runtime jar
+        run: rm -f build/libs/*-sources.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-hud
+          path: |
+            mods/halo-hud/build/libs/halo-hud-*.jar
+            mods/halo-hud/build/libs/halo-hud.json
+
+  windows:
+    needs: halo-hud
+    # Ship the launcher even if the HUD mod failed to build; the app hides HUD options when it isn't bundled.
+    if: ${{ !cancelled() }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bundle Halo HUD
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: halo-hud
+          path: src-tauri/resources/halo-hud
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Build installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Compiled into the backend only (never the web UI). Set them in repo Settings → Secrets.
+          HALO_MSA_CLIENT_ID: ${{ secrets.HALO_MSA_CLIENT_ID }}
+          CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+          HALO_SENTRY_DSN: ${{ secrets.HALO_SENTRY_DSN }}
+          HALO_DISCORD_APP_ID: ${{ secrets.HALO_DISCORD_APP_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Halo Client ${{ github.ref_name }}
+          releaseBody: See the assets below for the Windows installer (.msi or setup .exe).
+          releaseDraft: true
+          prerelease: false

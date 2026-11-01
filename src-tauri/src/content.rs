@@ -272,7 +272,7 @@ fn install_rec<'a>(
         let version: Value = match version_id {
             Some(v) => get_json(http, &format!("{MODRINTH}/version/{v}")).await?,
             None => {
-                let list = project_versions(http, project_id, &loader_filter(&kind, inst), &[inst.mc_version.clone()]).await?;
+                let list = project_versions(http, project_id, &loader_filter(&kind, inst), std::slice::from_ref(&inst.mc_version)).await?;
                 let pick = list.iter().find(|v| v["version_type"] == "release").or(list.first()).cloned();
                 match pick {
                     Some(v) => v,

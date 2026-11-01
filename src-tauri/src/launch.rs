@@ -330,7 +330,9 @@ pub fn build_args(
         args.extend(TUNED_G1.iter().map(|s| s.to_string()));
     }
     // AppCDS: Java 19+ creates and reuses a per-instance class archive automatically.
-    if inst.cds && java_major >= 19 {
+    // The JVM refuses to archive when the classpath has directories, so only jars qualify.
+    let all_jars = p.classpath.iter().all(|c| c.extension().map(|e| e == "jar").unwrap_or(false));
+    if inst.cds && java_major >= 19 && all_jars {
         let dir = paths.instance(&inst.id).join(".halo");
         let _ = std::fs::create_dir_all(&dir);
         let name: String = p.version.id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
@@ -625,5 +627,129 @@ mod tests {
         assert_eq!(analyze(neo, Some(1)).fix.unwrap().arg.unwrap(), "architectury");
         assert_eq!(analyze("java.lang.OutOfMemoryError: Java heap space", Some(1)).fix.unwrap().kind, "increase_ram");
         assert_eq!(analyze("nothing", Some(-1)).title, "The game crashed");
+    }
+}
+
+/// Runs the real argument builder and launches an actual JVM with the result,
+/// using a tiny stand-in "game" class. Proves the tuned G1 + AppCDS flags are
+/// accepted by Java and that every placeholder is substituted.
+#[cfg(test)]
+mod jvm_tests {
+    use super::*;
+    use crate::auth::LaunchAuth;
+    use crate::versions::{Arguments, VersionJson};
+
+    fn have_javac() -> bool {
+        std::process::Command::new("javac").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    }
+
+    #[test]
+    fn launches_a_real_jvm_with_built_args() {
+        if !have_javac() {
+            eprintln!("skipping: no javac");
+            return;
+        }
+        let tmp = std::env::temp_dir().join(format!("halo-jvm-test-{}", uuid::Uuid::new_v4()));
+        let paths = Paths { root: tmp.clone() };
+        std::fs::create_dir_all(paths.libraries()).unwrap();
+        let classes = tmp.join("classes");
+        std::fs::create_dir_all(&classes).unwrap();
+        std::fs::write(
+            classes.join("FakeGame.java"),
+            r#"public class FakeGame { public static void main(String[] a) {
+                System.out.println("ARGS " + String.join("|", a));
+                System.out.println("[Render thread/INFO]: Sound engine started");
+            } }"#,
+        )
+        .unwrap();
+        let ok = std::process::Command::new("javac").arg("-d").arg(&classes).arg(classes.join("FakeGame.java")).status().unwrap();
+        assert!(ok.success());
+        let jar = tmp.join("game.jar");
+        let ok = std::process::Command::new("jar").arg("cf").arg(&jar).arg("-C").arg(&classes).arg("FakeGame.class").status().unwrap();
+        assert!(ok.success());
+
+        let version = VersionJson {
+            id: "fake-1.0".into(),
+            main_class: Some("FakeGame".into()),
+            arguments: Some(Arguments {
+                game: vec![
+                    ArgValue::Plain("--username".into()),
+                    ArgValue::Plain("${auth_player_name}".into()),
+                    ArgValue::Plain("--gameDir".into()),
+                    ArgValue::Plain("${game_directory}".into()),
+                    ArgValue::Plain("--uuid".into()),
+                    ArgValue::Plain("${auth_uuid}".into()),
+                    ArgValue::Ruled {
+                        rules: vec![crate::versions::Rule { action: "allow".into(), os: None, features: Some(HashMap::from([("is_quick_play_multiplayer".into(), true)])) }],
+                        value: StringOrVec::Many(vec!["--quickPlayMultiplayer".into(), "${quickPlayMultiplayer}".into()]),
+                    },
+                ],
+                jvm: vec![ArgValue::Plain("-Djava.library.path=${natives_directory}".into()), ArgValue::Plain("-cp".into()), ArgValue::Plain("${classpath}".into())],
+            }),
+            ..Default::default()
+        };
+        let prepared = Prepared {
+            version,
+            classpath: vec![jar.clone()],
+            natives_dir: tmp.join("natives"),
+            client_jar: jar.clone(),
+            assets_index: "17".into(),
+            game_assets_dir: paths.assets(),
+            java_major: 21,
+        };
+        let inst = Instance { id: "test".into(), name: "Test".into(), ..Default::default() };
+        let auth = LaunchAuth { username: "LeoPlays".into(), uuid: "abc123".into(), access_token: "secret-token".into(), user_type: "msa" };
+        let game_dir = tmp.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let f = Features { custom_resolution: false, quick_play_multiplayer: true };
+        let args = build_args(&paths, &inst, &prepared, &auth, &game_dir, 1024, 21, Some("mc.hypixel.net"), &f);
+
+        assert!(args.iter().all(|a| !a.contains("${")), "unsubstituted placeholder in {args:?}");
+        assert!(args.contains(&"-Xmx1024M".to_string()));
+        assert!(args.iter().any(|a| a == "-XX:+AutoCreateSharedArchive"));
+        assert!(args.iter().any(|a| a == "mc.hypixel.net:25565"));
+        assert!(!args.iter().any(|a| a == "--server"), "quick play replaces --server");
+
+        // First run creates the CDS archive; second run must reuse it without errors.
+        for run in 0..2 {
+            let out = std::process::Command::new("java").args(&args).current_dir(&game_dir).output().unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "run {run} failed: {stderr}");
+            assert!(stdout.contains("ARGS --username|LeoPlays|--gameDir|"), "{stdout}");
+            assert!(stdout.contains("--quickPlayMultiplayer|mc.hypixel.net:25565"), "{stdout}");
+            assert!(stdout.contains("Sound engine started"));
+            assert!(!stderr.contains("Unrecognized VM option"), "{stderr}");
+        }
+        let mut dir_cp = prepared.classpath.clone();
+        dir_cp.push(classes.clone());
+        let p2 = Prepared { classpath: dir_cp, ..prepared };
+        let a2 = build_args(&paths, &inst, &p2, &auth, &game_dir, 1024, 21, None, &Features::default());
+        assert!(!a2.iter().any(|a| a.contains("AutoCreateSharedArchive")), "CDS must be off when the classpath has directories");
+        let jsa = paths.instance("test").join(".halo").join("fake-1.0.jsa");
+        assert!(jsa.exists(), "CDS archive should have been created at {}", jsa.display());
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[test]
+    fn legacy_versions_get_server_flag_and_cp() {
+        let tmp = std::env::temp_dir().join("halo-legacy-test");
+        let paths = Paths { root: tmp.clone() };
+        let version = VersionJson {
+            id: "1.8.9".into(),
+            main_class: Some("net.minecraft.client.main.Main".into()),
+            minecraft_arguments: Some("--username ${auth_player_name} --session ${auth_session} --assetIndex ${assets_index_name}".into()),
+            ..Default::default()
+        };
+        let prepared = Prepared { version, classpath: vec![tmp.join("a.jar")], natives_dir: tmp.join("n"), client_jar: tmp.join("a.jar"), assets_index: "1.8".into(), game_assets_dir: tmp.clone(), java_major: 8 };
+        let inst = Instance { id: "x".into(), cds: true, ..Default::default() };
+        let auth = LaunchAuth { username: "Steve".into(), uuid: "u".into(), access_token: "tok".into(), user_type: "msa" };
+        let args = build_args(&paths, &inst, &prepared, &auth, &tmp, 2048, 8, Some("play.example.com:25570"), &Features::default());
+        assert!(args.contains(&"-cp".to_string()));
+        assert!(!args.iter().any(|a| a.contains("AutoCreateSharedArchive")), "no CDS on Java 8");
+        let i = args.iter().position(|a| a == "--server").unwrap();
+        assert_eq!(args[i + 1], "play.example.com");
+        assert_eq!(args[i + 3], "25570");
+        assert!(args.iter().any(|a| a == "1.8"));
     }
 }

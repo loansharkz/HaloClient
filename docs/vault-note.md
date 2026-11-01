@@ -7,7 +7,7 @@ tags: [project, minecraft, tauri, rust, solidjs]
 
 **What:** Fast glassy Minecraft Java launcher for Windows. Multi-account (alts), Modrinth/CurseForge browser, all four loaders, Performance profile, Halo HUD companion mod.
 **Repo:** github.com/loansharkz/haloclient (`claude/inspiring-goodall-bt41fy`)
-**Status:** Phase 0: UI mockup built, awaiting approval.
+**Status:** v0.1 built (all phases 1–6 + Halo HUD). Waiting on the Azure app approval and the first Windows test.
 
 ## Connections
 - Hub: [[Minecraft Hub]]
@@ -24,3 +24,4 @@ See `DECISIONS.md` in the repo. Short version: Windows only, Tauri + SolidJS, gl
 
 ## Log
 - 2026-11-01: Step 0 Q&A done, DECISIONS.md written, UI mockup built.
+- 2026-11-01: Mockup approved ("Modrinth + Lunar mix"). Built Tauri backend (auth, launch, loaders, Modrinth/CF, servers), wired UI, Halo HUD mod for 26.3, CI + release workflows. 22 backend tests incl. a real JVM launch.
