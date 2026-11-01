@@ -7,3 +7,7 @@ src-tauri/gen/
 *.log
 .DS_Store
 dist-artifact/
+src-tauri/resources/halo-hud/*.jar
+src-tauri/resources/halo-hud/halo-hud.json
+mods/halo-hud/build/
+mods/halo-hud/.gradle/
