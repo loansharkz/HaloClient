@@ -353,8 +353,67 @@ where
     });
 }
 
+/// Streams new lines appended to `path` (starting at `offset`) until `done` is
+/// set and everything written so far has been read. Decodes leniently.
+pub fn spawn_file_tail(path: PathBuf, offset: u64, done: std::sync::Arc<std::sync::atomic::AtomicBool>, tx: tokio::sync::mpsc::UnboundedSender<String>) {
+    use std::io::{Read, Seek, SeekFrom};
+    tokio::task::spawn_blocking(move || {
+        let Ok(mut f) = std::fs::File::open(&path) else { return };
+        let _ = f.seek(SeekFrom::Start(offset));
+        let mut pending: Vec<u8> = Vec::new();
+        let mut chunk = vec![0u8; 64 * 1024];
+        loop {
+            let finished = done.load(std::sync::atomic::Ordering::SeqCst);
+            let n = f.read(&mut chunk).unwrap_or(0);
+            if n > 0 {
+                pending.extend_from_slice(&chunk[..n]);
+                while let Some(pos) = pending.iter().position(|b| *b == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=pos).collect();
+                    let text = String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_string();
+                    if tx.send(text).is_err() {
+                        return;
+                    }
+                }
+                continue;
+            }
+            if finished {
+                if !pending.is_empty() {
+                    let _ = tx.send(String::from_utf8_lossy(&pending).trim_end().to_string());
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+    });
+}
+
 #[cfg(test)]
 mod reader_tests {
+    #[tokio::test]
+    async fn tails_a_growing_file_until_done() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let path = std::env::temp_dir().join(format!("halo-tail-{}.log", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"header\n").unwrap();
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        super::spawn_file_tail(path.clone(), 7, done.clone(), tx);
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(b"one\r\ntw").unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        f.write_all(b"o\nthr\xe9e").unwrap();
+        done.store(true, Ordering::SeqCst);
+        let mut got = vec![];
+        while let Some(l) = rx.recv().await {
+            got.push(l);
+        }
+        assert_eq!(got[0], "one");
+        assert_eq!(got[1], "two");
+        assert!(got[2].starts_with("thr"));
+        assert_eq!(got.len(), 3);
+        let _ = std::fs::remove_file(path);
+    }
+
     #[tokio::test]
     async fn survives_non_utf8_output() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

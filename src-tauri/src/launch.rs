@@ -68,7 +68,7 @@ pub struct RunningGame {
     pub kill: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
-fn emit_state(app: &AppHandle, id: &str, phase: &str, message: impl Into<String>) {
+fn emit_state<R: tauri::Runtime>(app: &AppHandle<R>, id: &str, phase: &str, message: impl Into<String>) {
     let _ = app.emit("launch-state", LaunchState { instance_id: id.into(), phase: phase.into(), message: message.into() });
 }
 
@@ -204,8 +204,13 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     } else {
         args.clone()
     };
+    // Java writes straight into the launch log. A file never fills up the way a
+    // Windows pipe (~4 KB) can, which would freeze the game at its first log line.
+    let out = std::fs::OpenOptions::new().append(true).create(true).open(&launch_log).context("couldn't open the launch log")?;
+    let err = out.try_clone()?;
+    let log_offset = out.metadata().map(|m| m.len()).unwrap_or(0);
     let mut cmd = tokio::process::Command::new(&java);
-    cmd.args(&spawn_args).current_dir(&game_dir).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).stdin(std::process::Stdio::null());
+    cmd.args(&spawn_args).current_dir(&game_dir).stdout(std::process::Stdio::from(out)).stderr(std::process::Stdio::from(err)).stdin(std::process::Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     let spawned = cmd.spawn();
@@ -216,7 +221,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
             let _ = std::fs::remove_file(f);
         });
     }
-    let mut child = spawned.with_context(|| format!("couldn't start Java at {}", java.display()))?;
+    let child = spawned.with_context(|| format!("couldn't start Java at {}", java.display()))?;
     let pid = child.id();
     let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
     state.running.lock().await.insert(instance_id.to_string(), RunningGame { pid, started: Instant::now(), kill: Some(kill_tx) });
@@ -239,15 +244,13 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     }
 
     // --- monitor
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
     let app2 = app.clone();
     let state2 = state.clone();
     let id = instance_id.to_string();
     let token = auth.access_token.clone();
-    let cds = inst.cds && java_major >= 19;
+    let cds = inst.cds && java_major >= 19 && (!cfg!(windows) || std::env::var("HALO_FORCE_CDS").is_ok());
     tokio::spawn(async move {
-        let res = monitor(&app2, &state2, &id, child, stdout, stderr, kill_rx, clicked, &token, cds, &launch_log).await;
+        let res = monitor(&app2, &state2, &id, child, kill_rx, clicked, &token, cds, &launch_log, log_offset).await;
         if let Err(e) = res {
             log::error!("monitor failed: {e:#}");
         }
@@ -355,7 +358,9 @@ pub fn build_args(
     // AppCDS: Java 19+ creates and reuses a per-instance class archive automatically.
     // The JVM refuses to archive when the classpath has directories, so only jars qualify.
     let all_jars = p.classpath.iter().all(|c| c.extension().map(|e| e == "jar").unwrap_or(false));
-    if inst.cds && java_major >= 19 && all_jars {
+    // Off on Windows until benchmarks show it helps there (docs/BENCHMARKS.md).
+    let cds_platform_ok = !cfg!(windows) || std::env::var("HALO_FORCE_CDS").is_ok();
+    if inst.cds && java_major >= 19 && all_jars && cds_platform_ok {
         let dir = paths.instance(&inst.id).join(".halo");
         let _ = std::fs::create_dir_all(&dir);
         let name: String = p.version.id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
@@ -388,6 +393,19 @@ pub fn build_args(
     if let Some(legacy) = &p.version.minecraft_arguments {
         args.extend(legacy.split_whitespace().map(sub));
     }
+    // Drop options whose value is empty (e.g. --clientId "" / --xuid ""): some
+    // argument parsers misread a blank value as the next option.
+    let mut cleaned = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i].starts_with("--") && args.get(i + 1).map(|v| v.is_empty()).unwrap_or(false) {
+            i += 2;
+            continue;
+        }
+        cleaned.push(std::mem::take(&mut args[i]));
+        i += 1;
+    }
+    args = cleaned;
     if server.is_some() && !f.quick_play_multiplayer {
         args.extend(["--server".into(), host, "--port".into(), port.to_string()]);
     }
@@ -474,38 +492,51 @@ async fn run_hook(cmd: &str, dir: &Path, inst: &Instance) -> anyhow::Result<()> 
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn monitor(
-    app: &AppHandle,
+async fn monitor<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &Arc<AppState>,
     id: &str,
     mut child: tokio::process::Child,
-    stdout: tokio::process::ChildStdout,
-    stderr: tokio::process::ChildStderr,
     kill_rx: tokio::sync::oneshot::Receiver<()>,
     clicked: Instant,
     token: &str,
     cds: bool,
     launch_log: &Path,
+    log_offset: u64,
 ) -> anyhow::Result<()> {
     let paths = &state.paths;
-    let mut log_file = std::fs::OpenOptions::new().append(true).create(true).open(launch_log).ok();
     let mut got_output = false;
     let mut warned_silent = false;
+
+    // Waiter: owns the process; reports (exit status, killed by user).
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<(std::io::Result<std::process::ExitStatus>, bool)>();
+    {
+        let done = done.clone();
+        tokio::spawn(async move {
+            let r = tokio::select! {
+                s = child.wait() => (s, false),
+                _ = kill_rx => {
+                    let _ = child.start_kill();
+                    (child.wait().await, true)
+                }
+            };
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = exit_tx.send(r);
+        });
+    }
+    // Tail: streams new lines from the launch log until the process has exited.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    crate::core::spawn_line_reader(stdout, tx.clone());
-    crate::core::spawn_line_reader(stderr, tx.clone());
-    drop(tx);
+    crate::core::spawn_file_tail(launch_log.to_path_buf(), log_offset, done.clone(), tx);
 
     let connect_re = regex::Regex::new(r"Connecting to ([^\s,]+), (\d+)").unwrap();
     let mut boot_ms: Option<u64> = None;
     let mut batch: Vec<String> = vec![];
     let mut last_flush = Instant::now();
-    let mut killed = false;
-    let mut kill_rx = kill_rx;
     let started = Instant::now();
     state.logs.lock().unwrap().insert(id.to_string(), std::collections::VecDeque::new());
 
-    let status = loop {
+    loop {
         tokio::select! {
             line = rx.recv() => {
                 match line {
@@ -514,10 +545,6 @@ async fn monitor(
                             line = line.replace(token, "<access token hidden>");
                         }
                         got_output = true;
-                        if let Some(f) = log_file.as_mut() {
-                            use std::io::Write;
-                            let _ = writeln!(f, "{line}");
-                        }
                         if boot_ms.is_none() && BOOT_MARKERS.iter().any(|m| line.contains(m)) {
                             let ms = clicked.elapsed().as_millis() as u64;
                             boot_ms = Some(ms);
@@ -542,17 +569,13 @@ async fn monitor(
                         }
                     }
                     None => {
-                        // Streams closed: the process is exiting.
+                        // The process exited and the log is fully read.
                         if !batch.is_empty() {
                             let _ = app.emit("game-log", GameLog { instance_id: id.into(), lines: std::mem::take(&mut batch) });
                         }
-                        break child.wait().await?;
+                        break;
                     }
                 }
-            }
-            _ = &mut kill_rx, if !killed => {
-                killed = true;
-                let _ = child.start_kill();
             }
             // Watchdog: tell the player if the game has been silent for 20 seconds.
             _ = tokio::time::sleep(std::time::Duration::from_millis(1000)), if !got_output && !warned_silent && started.elapsed().as_secs() >= 20 => {
@@ -579,9 +602,11 @@ async fn monitor(
                 last_flush = Instant::now();
             }
         }
-    };
+    }
 
-    if let Some(f) = log_file.as_mut() {
+    let (status, killed) = exit_rx.await.map_err(|_| anyhow::anyhow!("lost track of the game process"))?;
+    let status = status?;
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(launch_log) {
         use std::io::Write;
         let _ = writeln!(f, "--- process exited: {:?} after {}s", status.code(), started.elapsed().as_secs());
     }
@@ -845,5 +870,108 @@ mod jvm_tests {
         assert_eq!(args[i + 1], "play.example.com");
         assert_eq!(args[i + 3], "25570");
         assert!(args.iter().any(|a| a == "1.8"));
+    }
+
+    #[test]
+    fn empty_option_values_are_dropped() {
+        let tmp = std::env::temp_dir().join("halo-empty-test");
+        let paths = Paths { root: tmp.clone() };
+        let version = VersionJson {
+            id: "x".into(),
+            main_class: Some("M".into()),
+            arguments: Some(Arguments {
+                game: ["--clientId", "${clientid}", "--xuid", "${auth_xuid}", "--versionType", "${version_type}"].iter().map(|s| ArgValue::Plain(s.to_string())).collect(),
+                jvm: vec![ArgValue::Plain("-cp".into()), ArgValue::Plain("${classpath}".into())],
+            }),
+            ..Default::default()
+        };
+        let prepared = Prepared { version, classpath: vec![tmp.join("a.jar")], natives_dir: tmp.clone(), client_jar: tmp.join("a.jar"), assets_index: "1".into(), game_assets_dir: tmp.clone(), java_major: 21 };
+        let auth = LaunchAuth { username: "a".into(), uuid: "u".into(), access_token: "0".into(), user_type: "legacy" };
+        let args = build_args(&paths, &Instance::default(), &prepared, &auth, &tmp, 1024, 21, None, &Features::default());
+        assert!(!args.iter().any(|a| a == "--clientId" || a == "--xuid"), "{args:?}");
+        let i = args.iter().position(|a| a == "--versionType").unwrap();
+        assert_eq!(args[i + 1], "Halo Client");
+    }
+}
+
+/// End-to-end: real JVM → launch log file → tail → monitor (boot timer,
+/// recent servers, exit). The fake game prints far more than a Windows pipe
+/// buffer holds before the boot marker, so a pipe-based design would stall.
+#[cfg(test)]
+mod monitor_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn monitor_streams_file_output_and_sees_exit() {
+        if std::process::Command::new("javac").arg("-version").output().map(|o| !o.status.success()).unwrap_or(true) {
+            eprintln!("skipping: no javac");
+            return;
+        }
+        let tmp = std::env::temp_dir().join(format!("halo-monitor-{}", uuid::Uuid::new_v4()));
+        let paths = Paths { root: tmp.clone() };
+        let inst = instances::create(&paths, Instance { name: "Mon".into(), mc_version: "x".into(), ..Default::default() }).unwrap();
+        let classes = tmp.join("c");
+        std::fs::create_dir_all(&classes).unwrap();
+        std::fs::write(
+            classes.join("Noisy.java"),
+            r#"public class Noisy { public static void main(String[] a) throws Exception {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 400; i++) System.out.println("[main/INFO]: filler line " + i + " ................................");
+                System.err.println("[Render thread/WARN]: on stderr");
+                System.out.println("[Render thread/INFO]: Sound engine started");
+                System.out.println("[Render thread/INFO]: Connecting to play.example.com, 25570");
+                Thread.sleep(300);
+            } }"#,
+        )
+        .unwrap();
+        assert!(std::process::Command::new("javac").arg("-d").arg(&classes).arg(classes.join("Noisy.java")).status().unwrap().success());
+
+        let launch_log = instances::game_dir(&paths, &inst.id).join("logs").join("halo-launch.log");
+        std::fs::create_dir_all(launch_log.parent().unwrap()).unwrap();
+        std::fs::write(&launch_log, b"header\n").unwrap();
+        let out = std::fs::OpenOptions::new().append(true).open(&launch_log).unwrap();
+        let err = out.try_clone().unwrap();
+        let offset = out.metadata().unwrap().len();
+        let child = tokio::process::Command::new("java")
+            .arg("-cp")
+            .arg(&classes)
+            .arg("Noisy")
+            .stdout(std::process::Stdio::from(out))
+            .stderr(std::process::Stdio::from(err))
+            .spawn()
+            .unwrap();
+
+        let app = tauri::test::mock_app();
+        let state = Arc::new(AppState {
+            accounts: tokio::sync::Mutex::new(Default::default()),
+            http: crate::core::http_client(),
+            settings: tokio::sync::RwLock::new(Default::default()),
+            flows: Default::default(),
+            running: Default::default(),
+            launching: Default::default(),
+            logs: Default::default(),
+            discord: Default::default(),
+            update: Default::default(),
+            paths: paths.clone(),
+        });
+        let (_kill_tx, kill_rx) = tokio::sync::oneshot::channel();
+        let r = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            monitor(app.handle(), &state, &inst.id, child, kill_rx, Instant::now(), "0", false, &launch_log, offset),
+        )
+        .await;
+        assert!(r.is_ok(), "monitor hung");
+        r.unwrap().unwrap();
+
+        let lines: Vec<String> = state.logs.lock().unwrap().get(&inst.id).unwrap().iter().cloned().collect();
+        assert!(lines.len() >= 403, "got {} lines", lines.len());
+        assert!(lines.iter().any(|l| l.contains("on stderr")));
+        let saved = instances::load(&paths, &inst.id).unwrap();
+        assert!(saved.last_boot_ms.is_some(), "boot marker not detected");
+        let recent = crate::servers::recent(&paths);
+        assert_eq!(recent[0].address, "play.example.com:25570");
+        let log = std::fs::read_to_string(&launch_log).unwrap();
+        assert!(log.contains("--- process exited: Some(0)"), "exit not recorded");
+        let _ = std::fs::remove_dir_all(tmp);
     }
 }

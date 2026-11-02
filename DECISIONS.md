@@ -102,7 +102,11 @@ PvP players, modpack players, SMP/economy players.
   - Windows uses `java.exe` with its console hidden instead of `javaw.exe`.
   - Java 9+ gets its arguments from an @argfile, which avoids the Windows 32k command-line limit. It's deleted 15 s after start because it contains the session token.
   - A 20 s watchdog warns when the game prints nothing.
-  - The root cause is still unknown. The next launch log will show it.
+  - The v0.1.3 launch log showed Java starting, then **zero output** and no exit. That points at the output pipe never being read; a full ~4 KB Windows pipe freezes the game at its first log line, before `latest.log` exists.
+  - **v0.1.4:** game output goes straight into `halo-launch.log` (no pipes), and Halo tails that file for the Logs tab, boot timer and recent servers. A process-waiter task handles exit and Stop.
+  - An end-to-end test runs a real JVM printing 400+ lines, more than a pipe holds, through the monitor.
+  - CDS is off on Windows until benchmarked (`HALO_FORCE_CDS` re-enables it).
+  - Options with empty values (`--clientId`, `--xuid`) are dropped.
 
 ## Multiplayer test log
 | Phase | Date | Online server | Local server | Result |
