@@ -3,7 +3,6 @@ name: Download site
 # One-time setup: repo Settings → Pages → Source: "GitHub Actions".
 on:
   push:
-    branches: [main]
     paths: ["site/**"]
   workflow_dispatch:
 
@@ -18,6 +17,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Only the repository's default branch publishes the site.
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-24.04
     environment:
       name: github-pages

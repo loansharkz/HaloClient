@@ -1,5 +1,5 @@
 name: Release
-# Push a tag like v0.1.0 to build signed-off Windows installers into a draft GitHub Release.
+# Push a tag like v0.1.0 to build the Windows installers and publish a GitHub Release.
 on:
   push:
     tags: ["v*"]
@@ -68,5 +68,5 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Halo Client ${{ github.ref_name }}
           releaseBody: See the assets below for the Windows installer (.msi or setup .exe).
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false

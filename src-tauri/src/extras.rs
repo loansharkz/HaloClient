@@ -9,8 +9,15 @@ use crate::instances::Instance;
 
 /// Discord application id (create one at discord.com/developers and upload a
 /// "halo" art asset). Without it, Rich Presence is off.
+/// Halo Client's Discord application (public id, not a secret). Override with HALO_DISCORD_APP_ID.
+const DEFAULT_DISCORD_APP_ID: &str = "1566610639223529514";
+
 fn discord_app_id() -> Option<String> {
-    std::env::var("HALO_DISCORD_APP_ID").ok().or_else(|| option_env!("HALO_DISCORD_APP_ID").map(String::from)).filter(|s| !s.is_empty())
+    std::env::var("HALO_DISCORD_APP_ID")
+        .ok()
+        .or_else(|| option_env!("HALO_DISCORD_APP_ID").map(String::from))
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(DEFAULT_DISCORD_APP_ID.to_string()))
 }
 
 /// Where the "Get Halo Client" button on Discord points.
