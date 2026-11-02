@@ -92,6 +92,9 @@ PvP players, modpack players, SMP/economy players.
 - **Secrets** (MSA client id, CurseForge key, Sentry DSN, Discord app id) are compiled into the Rust binary from CI secrets and never sent to the UI.
 - **Forge/NeoForge** are installed by running the official installer headless against Halo's data folder, retrying with the other flag spelling when one isn't recognized.
 
+- **Discord presence** uses the Discord app's name ("Halo Client") and an art asset named `halo`, plus a "Get Halo Client" button linking to the download page (`HALO_DOWNLOAD_URL`, default GitHub Pages). Logo files are in `branding/`.
+- **Distribution:** public repo → GitHub Releases for installers, plus a one-page download site in `site/` on GitHub Pages. Its button finds the newest `-setup.exe` through the GitHub API. Unsigned for now, so SmartScreen warns once.
+
 ## Multiplayer test log
 | Phase | Date | Online server | Local server | Result |
 |---|---|---|---|---|

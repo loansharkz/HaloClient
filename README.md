@@ -106,6 +106,20 @@ For local testing you can also paste a client ID in **Settings → Advanced**.
 2. Set `CURSEFORGE_API_KEY`. All CurseForge calls go through the backend.
 3. Projects whose authors disallow third-party downloads show a **Download from CurseForge** link instead of installing.
 
+## Discord Rich Presence (shows "Playing Halo Client" with the logo)
+1. Go to <https://discord.com/developers/applications> → **New Application** → name it **Halo Client**. Discord shows this name after "Playing".
+2. **General Information** → App Icon: upload `branding/halo-logo-1024.png`.
+3. **Rich Presence → Art Assets** → **Add Image(s)**: upload `branding/discord-halo-512.png` and name it exactly `halo`. New assets can take a few minutes to appear.
+4. Copy the **Application ID** (General Information) → add it as the `HALO_DISCORD_APP_ID` repo secret.
+
+The status shows the instance name, its version and loader (or the server you joined), elapsed time, and a **Get Halo Client** button that links to the download page.
+
+## Sharing with friends
+- **Download page:** `site/` is a one-page site with a Download button that always points at the newest installer. Turn it on once under repo **Settings → Pages → Source: GitHub Actions**. It deploys from `main` to <https://loansharkz.github.io/haloclient/>, or run the "Download site" workflow manually.
+- **Installers:** push a tag (`v0.1.0`) → a draft release appears under Releases → open it, check the files, and click **Publish**. The download page only sees published releases.
+- **Windows warning:** the installer isn't code-signed yet, so Windows SmartScreen shows "Windows protected your PC". Friends click **More info → Run anyway**. Code signing (e.g. Azure Trusted Signing, about $10/month) removes this later.
+- **Custom domain:** buy a domain, add it under Settings → Pages → Custom domain, then set `HALO_DOWNLOAD_URL` so the Discord button uses it.
+
 ## Data on disk
 
 Everything lives in `%APPDATA%\HaloClient` (movable in Settings): `instances/<id>/minecraft` (game folders), shared `libraries/`, `assets/`, `versions/`, `java/`, a hash-keyed `cache/` that hard-links identical mod jars across instances, and `logs/launcher.log`.

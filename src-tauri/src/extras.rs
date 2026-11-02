@@ -13,6 +13,11 @@ fn discord_app_id() -> Option<String> {
     std::env::var("HALO_DISCORD_APP_ID").ok().or_else(|| option_env!("HALO_DISCORD_APP_ID").map(String::from)).filter(|s| !s.is_empty())
 }
 
+/// Where the "Get Halo Client" button on Discord points.
+fn download_url() -> &'static str {
+    option_env!("HALO_DOWNLOAD_URL").filter(|s| s.starts_with("https://")).unwrap_or("https://loansharkz.github.io/haloclient/")
+}
+
 #[derive(Default)]
 pub struct Discord {
     client: Mutex<Option<DiscordIpcClient>>,
@@ -50,7 +55,8 @@ impl Discord {
             .details(&details)
             .state(&state)
             .timestamps(activity::Timestamps::new().start(start))
-            .assets(activity::Assets::new().large_image("halo").large_text("Halo Client"));
+            .assets(activity::Assets::new().large_image("halo").large_text("Halo Client"))
+            .buttons(vec![activity::Button::new("Get Halo Client", download_url())]);
         if let Some(c) = guard.as_mut() {
             if c.set_activity(act).is_err() {
                 *guard = None;

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Halo Client</title>
+  <meta name="description" content="A fast, clean Minecraft: Java Edition launcher. Multi-account, Modrinth built in, Fabric/Forge/NeoForge/Quilt, and a performance profile that boots faster." />
+  <meta property="og:title" content="Halo Client" />
+  <meta property="og:description" content="The fast, clean Minecraft launcher." />
+  <meta property="og:image" content="screenshot.png" />
+  <meta name="theme-color" content="#0b0716" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0716;
+      --text: #f4f1fb;
+      --muted: rgb(244 241 251 / 0.66);
+      --faint: rgb(244 241 251 / 0.42);
+      --glass: rgb(255 255 255 / 0.055);
+      --border: rgb(255 255 255 / 0.1);
+      --accent: oklch(0.68 0.2 275);
+      --accent-2: oklch(0.7 0.2 335);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    body { overflow-x: hidden; }
+    .sky { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background: radial-gradient(60vmax 45vmax at 12% -8%, oklch(0.32 0.16 275 / .55), transparent 70%),
+                  radial-gradient(55vmax 40vmax at 100% 105%, oklch(0.3 0.14 330 / .45), transparent 70%), var(--bg); }
+    .sky canvas { width: 100%; height: 100%; display: block; }
+    main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); }
+    header { display: flex; align-items: center; gap: 10px; padding-block: 22px; font-weight: 700; }
+    header a { margin-left: auto; color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; }
+    header a:hover { color: var(--text); }
+    .hero { text-align: center; padding-block: 56px 36px; }
+    .hero svg { filter: drop-shadow(0 0 22px oklch(0.68 0.2 275 / .7)); }
+    h1 { font-size: clamp(40px, 7vw, 68px); letter-spacing: -0.035em; line-height: 1; margin: 18px 0 14px; text-wrap: balance; }
+    .tag { color: var(--muted); font-size: clamp(16px, 2.2vw, 19px); max-width: 560px; margin: 0 auto; line-height: 1.5; text-wrap: balance; }
+    .cta { display: inline-flex; align-items: center; gap: 10px; margin-top: 32px; padding: 16px 30px; border-radius: 16px; color: #fff; text-decoration: none; font-weight: 700; font-size: 17px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 34px oklch(0.68 0.2 275 / .35), inset 0 1px 0 rgb(255 255 255 / .25); transition: transform .15s, box-shadow .2s; }
+    .cta:hover { transform: translateY(-2px); box-shadow: 0 14px 40px oklch(0.68 0.2 275 / .5); }
+    .cta:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+    .meta { color: var(--faint); font-size: 13px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+    .shot { margin: 48px auto 0; border-radius: 18px; border: 1px solid var(--border); box-shadow: 0 30px 80px rgb(0 0 0 / .5); overflow: hidden; max-width: 100%; }
+    .shot img { display: block; width: 100%; height: auto; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 64px; }
+    .card { background: var(--glass); border: 1px solid var(--border); border-radius: 16px; padding: 20px; backdrop-filter: blur(18px); }
+    .card h3 { margin: 0 0 6px; font-size: 16px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .card .ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 12px; background: oklch(0.68 0.2 275 / .16); color: var(--accent); font-size: 17px; }
+    .steps { margin-top: 64px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .steps .card b { color: var(--accent); margin-right: 6px; }
+    .note { margin-top: 14px; color: var(--faint); font-size: 13px; line-height: 1.55; text-align: center; max-width: 640px; margin-inline: auto; }
+    footer { text-align: center; color: var(--faint); font-size: 12.5px; padding-block: 56px 40px; }
+    footer a { color: var(--muted); }
+    @media (prefers-reduced-motion: reduce) { .cta { transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="sky" aria-hidden="true"><canvas id="sky"></canvas></div>
+  <main>
+    <header>
+      <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><g transform="rotate(-14 32 32)"><ellipse cx="32" cy="32" rx="24" ry="10" fill="none" stroke="url(#g1)" stroke-width="5.5"/></g><circle cx="32" cy="32" r="3" fill="#f4f1fb"/><defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c4b5fd"/><stop offset=".5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs></svg>
+      Halo Client
+      <a href="https://github.com/loansharkz/haloclient">GitHub</a>
+    </header>
+
+    <section class="hero">
+      <svg width="96" height="96" viewBox="0 0 64 64" aria-hidden="true"><g transform="rotate(-14 32 32)"><ellipse cx="32" cy="32" rx="24" ry="10" fill="none" stroke="url(#g2)" stroke-width="5"/></g><circle cx="32" cy="32" r="2.6" fill="#f4f1fb"/><defs><linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c4b5fd"/><stop offset=".5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs></svg>
+      <h1>Halo Client</h1>
+      <p class="tag">The fast, clean Minecraft launcher. All your accounts, every mod loader, Modrinth built in, and a launch path tuned to get you in-game sooner.</p>
+      <a class="cta" id="download" href="https://github.com/loansharkz/haloclient/releases/latest">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+        Download for Windows
+      </a>
+      <div class="meta" id="meta">Free · Windows 10 and 11</div>
+      <div class="shot"><img src="screenshot.png" alt="Halo Client home screen with the Play button, recent instances, Quick join and news" width="1280" height="800" /></div>
+    </section>
+
+    <section class="features" aria-label="Features">
+      <div class="card"><div class="ico">⚡</div><h3>Boots faster</h3><p>Tuned Java, class-data sharing and a Performance profile (Sodium, Lithium, ModernFix and more). Every launch is timed so you can see it.</p></div>
+      <div class="card"><div class="ico">👥</div><h3>All your accounts</h3><p>Sign in with Microsoft and switch alts in one click. No Halo account, ever.</p></div>
+      <div class="card"><div class="ico">🧩</div><h3>Mods in one click</h3><p>Browse Modrinth inside the launcher. Dependencies install themselves. Fabric, Quilt, Forge and NeoForge.</p></div>
+      <div class="card"><div class="ico">🌐</div><h3>Quick join</h3><p>Jump back into the servers you played, with live player counts and server icons.</p></div>
+      <div class="card"><div class="ico">🎯</div><h3>Halo HUD</h3><p>FPS, CPS, keystrokes, armor, potion timers and zoom, in a lightweight companion mod.</p></div>
+      <div class="card"><div class="ico">🛟</div><h3>Fixes crashes for you</h3><p>Spots the usual causes (wrong Java, a missing mod, low memory) and fixes them with one click.</p></div>
+    </section>
+
+    <section class="steps" aria-label="How to install">
+      <div class="card"><h3><b>1</b>Download</h3><p>Grab the installer above. It's small and installs just for you, no admin needed.</p></div>
+      <div class="card"><h3><b>2</b>Run it</h3><p>If Windows shows "Windows protected your PC", click <b style="color:var(--text)">More info → Run anyway</b>. That appears for new apps that aren't code-signed yet.</p></div>
+      <div class="card"><h3><b>3</b>Play</h3><p>Add your account, make an instance, hit Play.</p></div>
+    </section>
+    <p class="note">Halo downloads Minecraft from Mojang's official servers and checks every file. You need your own copy of Minecraft: Java Edition to play online.</p>
+
+    <footer>Halo Client is not affiliated with Mojang or Microsoft. Minecraft is a trademark of Mojang AB. · <a href="https://github.com/loansharkz/haloclient">Source</a></footer>
+  </main>
+
+  <script>
+    // Point the button straight at the newest Windows installer.
+    (async () => {
+      try {
+        const r = await fetch("https://api.github.com/repos/loansharkz/haloclient/releases/latest");
+        if (!r.ok) return;
+        const rel = await r.json();
+        const asset = (rel.assets || []).find((a) => /-setup\.exe$/i.test(a.name)) || (rel.assets || []).find((a) => /\.msi$/i.test(a.name));
+        if (!asset) return;
+        document.getElementById("download").href = asset.browser_download_url;
+        const mb = (asset.size / 1e6).toFixed(1);
+        document.getElementById("meta").textContent = `Version ${String(rel.tag_name).replace(/^v/, "")} · ${mb} MB · Free · Windows 10 and 11`;
+      } catch { /* keep the releases-page link */ }
+    })();
+
+    // Starfield with the occasional shooting star (paused for reduced motion).
+    (() => {
+      const c = document.getElementById("sky"), g = c.getContext("2d");
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      let w, h, stars = [], meteors = [], last = performance.now(), next = 1500;
+      const R = (a, b) => a + Math.random() * (b - a);
+      function size() {
+        const d = Math.min(devicePixelRatio || 1, 2);
+        w = innerWidth; h = innerHeight; c.width = w * d; c.height = h * d; g.setTransform(d, 0, 0, d, 0, 0);
+        stars = Array.from({ length: Math.round((w * h) / 2600) }, () => ({ x: R(0, w), y: R(0, h), r: Math.random() < 0.07 ? R(1.1, 1.7) : R(0.35, 1), a: R(0.35, 1), p: R(0, 6.3), s: R(0.5, 1.8) }));
+      }
+      function frame(now) {
+        const dt = Math.min(50, now - last); last = now; g.clearRect(0, 0, w, h);
+        for (const s of stars) { g.fillStyle = `rgb(255 255 255 / ${s.a * (reduce ? 0.85 : 0.6 + 0.4 * Math.sin(now / 1000 * s.s + s.p))})`; g.beginPath(); g.arc(s.x, s.y, s.r, 0, 6.283); g.fill(); }
+        if (!reduce) {
+          if ((next -= dt) <= 0) { const a = R(0.38, 0.62), v = R(0.7, 1.2), l = R(700, 1200); meteors.push({ x: R(w * 0.25, w * 1.1), y: R(-h * 0.1, h * 0.4), vx: -Math.cos(a) * v, vy: Math.sin(a) * v, len: R(140, 260), life: l, max: l }); next = R(2000, 5500); }
+          for (const m of meteors) {
+            m.x += m.vx * dt; m.y += m.vy * dt; m.life -= dt;
+            const t = m.life / m.max, f = Math.min(1, (1 - t) * 6) * Math.min(1, t * 2.2), sp = Math.hypot(m.vx, m.vy);
+            const tx = m.x - (m.vx / sp) * m.len, ty = m.y - (m.vy / sp) * m.len, gr = g.createLinearGradient(m.x, m.y, tx, ty);
+            gr.addColorStop(0, `rgb(255 255 255 / ${f})`); gr.addColorStop(0.25, `oklch(0.8 0.17 275 / ${f * 0.6})`); gr.addColorStop(1, "oklch(0.7 0.2 335 / 0)");
+            g.strokeStyle = gr; g.lineWidth = 1.8; g.lineCap = "round"; g.beginPath(); g.moveTo(m.x, m.y); g.lineTo(tx, ty); g.stroke();
+          }
+          meteors = meteors.filter((m) => m.life > 0);
+        }
+        if (!reduce) requestAnimationFrame(frame);
+      }
+      addEventListener("resize", size); size(); requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>
