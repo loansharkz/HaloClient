@@ -79,6 +79,8 @@ pub struct Prewarm {
     pub hidden: Vec<isize>,
     pub ended: bool,
     pub last_trim: Option<Instant>,
+    /// Play was pressed before the title screen: show the window as soon as it's ready.
+    pub reveal_requested: bool,
 }
 
 impl RunningGame {
@@ -92,6 +94,8 @@ impl RunningGame {
                 let p = p.lock().unwrap();
                 if p.revealed_at.is_some() {
                     "running"
+                } else if p.reveal_requested {
+                    "opening"
                 } else if p.ready {
                     "ready"
                 } else {
@@ -180,7 +184,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
         store.save(paths)?;
     }
 
-    let dl = Downloader { http, paths, app, threads: settings.download_threads.clamp(1, 64) as usize, verify_existing: false };
+    let dl = Downloader { http, paths, app, threads: settings.download_threads.clamp(1, 64) as usize, verify_existing: false, silent: prewarm };
 
     // --- loader + version
     emit_state(app, instance_id, prep, "Preparing game version");
@@ -272,7 +276,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     let pid = child.id();
     let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
     let pw = match (prewarm, pid) {
-        (true, Some(pid)) => Some(Arc::new(std::sync::Mutex::new(Prewarm { pid, created: Instant::now(), ready: false, revealed_at: None, hidden: vec![], ended: false, last_trim: None }))),
+        (true, Some(pid)) => Some(Arc::new(std::sync::Mutex::new(Prewarm { pid, created: Instant::now(), ready: false, revealed_at: None, hidden: vec![], ended: false, last_trim: None, reveal_requested: false }))),
         _ => None,
     };
     state.running.lock().await.insert(instance_id.to_string(), RunningGame { pid, started: Instant::now(), kill: Some(kill_tx), prewarm: pw.clone() });
@@ -301,7 +305,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
                     state2.prewarm_paused.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
                 if outcome.reprewarm {
-                    crate::schedule_prewarm(app2.clone(), state2.clone(), std::time::Duration::from_secs(5));
+                    crate::schedule_prewarm(app2.clone(), state2.clone(), std::time::Duration::from_secs(1));
                 }
             }
             Err(e) => log::error!("monitor failed: {e:#}"),
@@ -311,7 +315,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
 }
 
 /// Bookkeeping for when a game becomes visible (normal launch, or Play on a pre-load).
-async fn on_shown(app: &AppHandle, state: &Arc<AppState>, inst: &mut Instance, server: Option<&str>, settings: &crate::core::Settings) -> anyhow::Result<()> {
+async fn on_shown<R: tauri::Runtime>(app: &AppHandle<R>, state: &Arc<AppState>, inst: &mut Instance, server: Option<&str>, settings: &crate::core::Settings) -> anyhow::Result<()> {
     inst.last_played = Some(now_ms());
     instances::save(&state.paths, inst)?;
     {
@@ -363,8 +367,11 @@ fn settle_prewarm(pw: Arc<std::sync::Mutex<Prewarm>>, pid: u32) {
     std::thread::spawn(move || {
         // The audio session appears when the sound engine starts; keep trying briefly.
         for _ in 0..30 {
-            if pw.lock().unwrap().revealed_at.is_some() {
-                return;
+            {
+                let p = pw.lock().unwrap();
+                if p.revealed_at.is_some() || p.reveal_requested {
+                    return;
+                }
             }
             if crate::winctl::set_mute(pid, true).unwrap_or(false) {
                 break;
@@ -381,9 +388,22 @@ fn settle_prewarm(pw: Arc<std::sync::Mutex<Prewarm>>, pid: u32) {
     });
 }
 
+/// If Play was pressed during loading and the title-screen line never appeared,
+/// mark it ready so it can be shown anyway. Returns true if it was stuck.
+pub async fn force_ready_if_stuck(state: &Arc<AppState>, id: &str) -> bool {
+    let running = state.running.lock().await;
+    let Some(pw) = running.get(id).and_then(|g| g.prewarm.clone()) else { return false };
+    let mut p = pw.lock().unwrap();
+    let stuck = p.reveal_requested && p.revealed_at.is_none() && !p.ended && !p.ready;
+    if stuck {
+        p.ready = true;
+    }
+    stuck
+}
+
 /// Shows a pre-loaded game: restores sound and priority, shows its window and
 /// starts playtime/Discord. Returns false if there was nothing to reveal.
-pub async fn reveal(app: &AppHandle, state: &Arc<AppState>, id: &str) -> anyhow::Result<bool> {
+pub async fn reveal<R: tauri::Runtime>(app: &AppHandle<R>, state: &Arc<AppState>, id: &str) -> anyhow::Result<bool> {
     let (pid, pw) = {
         let running = state.running.lock().await;
         match running.get(id) {
@@ -393,6 +413,14 @@ pub async fn reveal(app: &AppHandle, state: &Arc<AppState>, id: &str) -> anyhow:
     };
     let hidden = {
         let mut p = pw.lock().unwrap();
+        if !p.ready {
+            // Still loading: keep it hidden and show it the moment the title screen is up,
+            // so the player never sees Minecraft's loading screen.
+            p.reveal_requested = true;
+            drop(p);
+            emit_state(app, id, "opening", "Opening");
+            return Ok(true);
+        }
         p.revealed_at = Some(Instant::now());
         p.hidden.clone()
     };
@@ -701,7 +729,7 @@ async fn monitor<R: tauri::Runtime>(
                         if boot_ms.is_none() && BOOT_MARKERS.iter().any(|m| line.contains(m)) {
                             let ms = clicked.elapsed().as_millis() as u64;
                             boot_ms = Some(ms);
-                            on_boot(app, id, ms, &prewarm);
+                            on_boot(app, state, id, ms, &prewarm);
                         }
                         if let Some(c) = connect_re.captures(&line) {
                             let port: u16 = c[2].parse().unwrap_or(25565);
@@ -747,7 +775,7 @@ async fn monitor<R: tauri::Runtime>(
                 if fresh && std::fs::read_to_string(&log).map(|t| BOOT_MARKERS.iter().any(|m| t.contains(m))).unwrap_or(false) {
                     let ms = clicked.elapsed().as_millis() as u64;
                     boot_ms = Some(ms);
-                    on_boot(app, id, ms, &prewarm);
+                    on_boot(app, state, id, ms, &prewarm);
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)), if !batch.is_empty() => {
@@ -814,17 +842,27 @@ async fn monitor<R: tauri::Runtime>(
     })
 }
 
-fn on_boot<R: tauri::Runtime>(app: &AppHandle<R>, id: &str, ms: u64, prewarm: &Option<Arc<std::sync::Mutex<Prewarm>>>) {
+fn on_boot<R: tauri::Runtime>(app: &AppHandle<R>, state: &Arc<AppState>, id: &str, ms: u64, prewarm: &Option<Arc<std::sync::Mutex<Prewarm>>>) {
     let _ = app.emit("game-boot", serde_json::json!({ "instanceId": id, "bootMs": ms, "background": prewarm.is_some() }));
     if let Some(pw) = prewarm {
-        let pid = {
+        let (pid, show_now) = {
             let mut p = pw.lock().unwrap();
             if p.revealed_at.is_some() {
                 return;
             }
             p.ready = true;
-            p.pid
+            (p.pid, p.reveal_requested)
         };
+        if show_now {
+            // Play was pressed while it loaded: show it now that the title screen is up.
+            let (app, state, id) = (app.clone(), state.clone(), id.to_string());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = reveal(&app, &state, &id).await {
+                    log::warn!("reveal after load failed: {e:#}");
+                }
+            });
+            return;
+        }
         settle_prewarm(pw.clone(), pid);
         emit_state(app, id, "ready", "Instant Play ready");
     }
@@ -1172,10 +1210,13 @@ mod prewarm_tests {
         assert_eq!(normal.phase(), "running");
         assert!(!normal.waiting());
 
-        let pw = Arc::new(std::sync::Mutex::new(Prewarm { pid: 1, created: Instant::now(), ready: false, revealed_at: None, hidden: vec![], ended: false, last_trim: None }));
+        let pw = Arc::new(std::sync::Mutex::new(Prewarm { pid: 1, created: Instant::now(), ready: false, revealed_at: None, hidden: vec![], ended: false, last_trim: None, reveal_requested: false }));
         let g = RunningGame { pid: Some(1), started: Instant::now(), kill: None, prewarm: Some(pw.clone()) };
         assert_eq!(g.phase(), "prewarming");
         assert!(g.waiting());
+        pw.lock().unwrap().reveal_requested = true;
+        assert_eq!(g.phase(), "opening");
+        pw.lock().unwrap().reveal_requested = false;
         pw.lock().unwrap().ready = true;
         assert_eq!(g.phase(), "ready");
         pw.lock().unwrap().revealed_at = Some(Instant::now());

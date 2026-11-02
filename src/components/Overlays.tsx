@@ -24,7 +24,7 @@ export function PlayButton(props: { instanceId: string; size?: "lg" | "md"; serv
         e.preventDefault();
         launchInstance(props.instanceId, props.server);
       }}
-      disabled={phase() === "preparing"}
+      disabled={phase() === "preparing" || phase() === "opening"}
     >
       <Show when={phase() === "ready"}>
         <Zap size={props.size === "md" ? 14 : 20} fill="currentColor" /> {props.label ?? "Play"}
@@ -32,7 +32,7 @@ export function PlayButton(props: { instanceId: string; size?: "lg" | "md"; serv
       <Show when={phase() === "idle" || phase() === "stopped" || phase() === "error" || phase() === "prewarming"}>
         <Play size={props.size === "md" ? 14 : 20} fill="currentColor" /> {props.label ?? "Play"}
       </Show>
-      <Show when={phase() === "preparing"}>
+      <Show when={phase() === "preparing" || phase() === "opening"}>
         <LoaderCircle size={props.size === "md" ? 14 : 18} class="spin" /> {pct() != null ? `${pct()}%` : props.size === "md" ? "" : "Starting"}
       </Show>
       <Show when={phase() === "running"}>

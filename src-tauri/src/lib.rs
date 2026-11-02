@@ -120,7 +120,7 @@ type S<'a> = State<'a, Arc<AppState>>;
 impl AppState {
     async fn downloader<'a>(&'a self, app: &'a AppHandle, verify: bool) -> Downloader<'a> {
         let threads = self.settings.read().await.download_threads.clamp(1, 64) as usize;
-        Downloader { http: &self.http, paths: &self.paths, app, threads, verify_existing: verify }
+        Downloader { http: &self.http, paths: &self.paths, app, threads, verify_existing: verify, silent: false }
     }
 }
 
@@ -800,6 +800,14 @@ async fn play(app: &AppHandle, state: &Arc<AppState>, id: &str, server: Option<S
     state.prewarm_paused.store(false, std::sync::atomic::Ordering::SeqCst);
     // Quick-join needs the server on the command line, so it can't reuse a pre-load.
     if server.is_none() && launch::reveal(app, state, id).await? {
+        // Safety net: if it was still loading and never reports the title screen, show it after 60 s.
+        let (app, state, id) = (app.clone(), state.clone(), id.to_string());
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            if launch::force_ready_if_stuck(&state, &id).await {
+                let _ = launch::reveal(&app, &state, &id).await;
+            }
+        });
         return Ok(());
     }
     stop_waiting_prewarms(state, None).await;

@@ -221,7 +221,7 @@ export interface Screenshot {
 
 export interface LaunchState {
   instanceId: string;
-  phase: "preparing" | "prewarming" | "ready" | "running" | "stopped" | "error";
+  phase: "preparing" | "prewarming" | "opening" | "ready" | "running" | "stopped" | "error";
   message: string;
 }
 

@@ -123,7 +123,7 @@ pub async fn ensure(http: &reqwest::Client, paths: &Paths, app: &AppHandle, majo
     let _ = std::fs::remove_dir_all(&tmp_dir);
     std::fs::create_dir_all(&tmp_dir)?;
     let archive = tmp_dir.join(&asset.binary.package.name);
-    let dl = crate::download::Downloader { http, paths, app, threads: 1, verify_existing: false };
+    let dl = crate::download::Downloader { http, paths, app, threads: 1, verify_existing: false, silent: false };
     dl.run("java", &format!("Downloading Java {major}"), vec![crate::download::DlItem::new(asset.binary.package.link.clone(), archive.clone())])
         .await?;
     let actual = sha256_file(&archive).await?;

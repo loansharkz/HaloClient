@@ -82,7 +82,7 @@ export const selectedInstance = () => app.instances.find((i) => i.id === app.sel
 export const instanceById = (id: string) => app.instances.find((i) => i.id === id) ?? null;
 export const isBusy = (id: string) => {
   const p = app.launch[id]?.phase;
-  return p === "preparing" || p === "running";
+  return p === "preparing" || p === "opening" || p === "running";
 };
 
 let toastId = 0;

@@ -93,9 +93,7 @@ function PreflightStatus() {
       <Show when={launch()?.phase === "ready"}>
         <span class="text-accent">· Instant Play ready</span>
       </Show>
-      <Show when={launch()?.phase === "prewarming"}>
-        <span class="text-faint">· pre-loading in the background</span>
-      </Show>
+
     </div>
   );
 }

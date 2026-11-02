@@ -57,6 +57,8 @@ pub struct Downloader<'a> {
     pub app: &'a AppHandle,
     pub threads: usize,
     pub verify_existing: bool,
+    /// No progress events (Instant Play pre-loads run invisibly).
+    pub silent: bool,
 }
 
 impl Downloader<'_> {
@@ -71,7 +73,9 @@ impl Downloader<'_> {
             return Ok(());
         }
         let done = Arc::new(AtomicU64::new(0));
-        emit_progress(self.app, task, label, 0, total);
+        if !self.silent {
+            emit_progress(self.app, task, label, 0, total);
+        }
 
         let results: Vec<anyhow::Result<()>> = futures::stream::iter(items)
             .map(|item| {
@@ -79,7 +83,7 @@ impl Downloader<'_> {
                 async move {
                     let r = self.fetch_one(&item).await.with_context(|| format!("downloading {}", item.urls[0]));
                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n == total || n % 8 == 0 {
+                    if !self.silent && (n == total || n % 8 == 0) {
                         emit_progress(self.app, task, label, n, total);
                     }
                     r
