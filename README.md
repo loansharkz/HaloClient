@@ -115,7 +115,7 @@ For local testing you can also paste a client ID in **Settings → Advanced**.
 The status shows the instance name, its version and loader (or the server you joined), elapsed time, and a **Get Halo Client** button that links to the download page.
 
 ## Sharing with friends
-- **Download page:** `site/` is a one-page site with a Download button that always points at the newest installer. Turn it on once under repo **Settings → Pages → Source: GitHub Actions**. It deploys from the default branch to <https://loansharkz.github.io/haloclient/>, or run the "Download site" workflow manually.
+- **Download page:** `site/` is a one-page site with a Download button that always points at the newest installer. Turn it on once under repo **Settings → Pages → Source: GitHub Actions**. It deploys from the default branch to <https://loansharkz.github.io/HaloClient/>, or run the "Download site" workflow manually.
 - **Installers:** push a tag (`v0.1.0`) → GitHub builds and publishes the release, and the download page picks it up automatically.
 - **Windows warning:** the installer isn't code-signed yet, so Windows SmartScreen shows "Windows protected your PC". Friends click **More info → Run anyway**. Code signing (e.g. Azure Trusted Signing, about $10/month) removes this later.
 - **Custom domain:** buy a domain, add it under Settings → Pages → Custom domain, then set `HALO_DOWNLOAD_URL` so the Discord button uses it.

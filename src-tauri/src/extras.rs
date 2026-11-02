@@ -22,7 +22,7 @@ fn discord_app_id() -> Option<String> {
 
 /// Where the "Get Halo Client" button on Discord points.
 fn download_url() -> &'static str {
-    option_env!("HALO_DOWNLOAD_URL").filter(|s| s.starts_with("https://")).unwrap_or("https://loansharkz.github.io/haloclient/")
+    option_env!("HALO_DOWNLOAD_URL").filter(|s| s.starts_with("https://")).unwrap_or("https://loansharkz.github.io/HaloClient/")
 }
 
 #[derive(Default)]

@@ -1,5 +1,5 @@
 name: Download site
-# Publishes site/ to GitHub Pages: https://loansharkz.github.io/haloclient/
+# Publishes site/ to GitHub Pages: https://loansharkz.github.io/HaloClient/
 # One-time setup: repo Settings → Pages → Source: "GitHub Actions".
 on:
   push:
