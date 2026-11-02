@@ -120,7 +120,7 @@ PvP players, modpack players, SMP/economy players.
 - **v0.1.6 (Leo's first Instant Play test):**
   - Pressing Play while the pre-load is still loading now keeps the game hidden. The button shows "Opening", and the window appears the moment the title screen is up, so the loading screen is never seen (60 s safety net).
   - Pre-load activity no longer shows in Halo's UI (no progress chip or status text); only ⚡ on Play when ready.
-  - Re-preload starts 1 s after a game closes (was 5 s).
+  - Re-preload starts 0.1 s after a game closes (was 5 s).
   - "Quit should keep it loaded" can't be done from outside: Minecraft shuts itself down on Quit. It needs an in-game Halo mod (Fabric only). Pending Leo's decision.
 - **Class-data sharing** is a Settings toggle (default off on Windows) so Leo can compare boot times.
 

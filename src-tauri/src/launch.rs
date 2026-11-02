@@ -305,7 +305,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
                     state2.prewarm_paused.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
                 if outcome.reprewarm {
-                    crate::schedule_prewarm(app2.clone(), state2.clone(), std::time::Duration::from_secs(1));
+                    crate::schedule_prewarm(app2.clone(), state2.clone(), std::time::Duration::from_millis(100));
                 }
             }
             Err(e) => log::error!("monitor failed: {e:#}"),
