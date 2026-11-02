@@ -9,7 +9,6 @@ use std::time::Instant;
 use anyhow::{bail, Context};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::core::{now_ms, Paths};
 use crate::download::Downloader;
@@ -340,6 +339,9 @@ pub fn build_args(
         args.push(format!("-XX:SharedArchiveFile={}", dir.join(format!("{name}.jsa")).display()));
     }
     args.push("-Dlog4j2.formatMsgNoLookups=true".into());
+    // Make the game's console output UTF-8 so logs read cleanly (Java 18+; ignored before).
+    args.push("-Dstdout.encoding=UTF-8".into());
+    args.push("-Dstderr.encoding=UTF-8".into());
     args.extend(split_args(&inst.jvm_args));
 
     match p.version.arguments.as_ref().filter(|a| !a.jvm.is_empty()) {
@@ -428,17 +430,8 @@ async fn monitor(
 ) -> anyhow::Result<()> {
     let paths = &state.paths;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    for reader in [Box::new(stdout) as Box<dyn tokio::io::AsyncRead + Unpin + Send>, Box::new(stderr)] {
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(reader).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-    }
+    crate::core::spawn_line_reader(stdout, tx.clone());
+    crate::core::spawn_line_reader(stderr, tx.clone());
     drop(tx);
 
     let connect_re = regex::Regex::new(r"Connecting to ([^\s,]+), (\d+)").unwrap();
@@ -493,6 +486,16 @@ async fn monitor(
             _ = &mut kill_rx, if !killed => {
                 killed = true;
                 let _ = child.start_kill();
+            }
+            // Fallback timer: if the game prints nothing to us, read its own latest.log for the marker.
+            _ = tokio::time::sleep(std::time::Duration::from_millis(1000)), if boot_ms.is_none() && started.elapsed().as_secs() >= 3 => {
+                let log = instances::game_dir(paths, id).join("logs").join("latest.log");
+                let fresh = std::fs::metadata(&log).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|e| e <= started.elapsed()).unwrap_or(false);
+                if fresh && std::fs::read_to_string(&log).map(|t| BOOT_MARKERS.iter().any(|m| t.contains(m))).unwrap_or(false) {
+                    let ms = clicked.elapsed().as_millis() as u64;
+                    boot_ms = Some(ms);
+                    let _ = app.emit("game-boot", serde_json::json!({ "instanceId": id, "bootMs": ms }));
+                }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)), if !batch.is_empty() => {
                 let _ = app.emit("game-log", GameLog { instance_id: id.into(), lines: std::mem::take(&mut batch) });

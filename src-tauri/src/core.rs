@@ -324,3 +324,48 @@ pub fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Forwards a child process's output line by line. Bytes are decoded
+/// leniently: Java on Windows writes in the system code page, and a strict
+/// UTF-8 reader would stop at the first non-UTF-8 character.
+pub fn spawn_line_reader<R>(reader: R, tx: tokio::sync::mpsc::UnboundedSender<String>)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    use tokio::io::AsyncBufReadExt;
+    tokio::spawn(async move {
+        let mut r = tokio::io::BufReader::new(reader);
+        let mut buf = Vec::with_capacity(512);
+        loop {
+            buf.clear();
+            match r.read_until(b'\n', &mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod reader_tests {
+    #[tokio::test]
+    async fn survives_non_utf8_output() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // "caf\xe9" is Windows-1252 for "café": invalid UTF-8.
+        let data: &[u8] = b"first\r\ncaf\xe9 line\nlast";
+        super::spawn_line_reader(data, tx);
+        let mut got = vec![];
+        while let Some(l) = rx.recv().await {
+            got.push(l);
+        }
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0], "first");
+        assert!(got[1].starts_with("caf"));
+        assert_eq!(got[2], "last");
+    }
+}

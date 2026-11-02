@@ -1,5 +1,5 @@
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
-import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
   ChevronRight, CircleArrowUp, Copy, Cpu, FileArchive, Folder, FolderOpen, Gauge, Image, LoaderCircle, MemoryStick, Plus, Puzzle, RefreshCw,
@@ -166,8 +166,13 @@ function ContentTab(props: { inst: Instance }) {
 
 function LogsTab(props: { inst: Instance }) {
   const [q, setQ] = createSignal("");
-  const [history] = createResource(() => props.inst.id, (id) => api.gameLog(id).catch(() => []));
-  const lines = () => app.logs[props.inst.id] ?? history() ?? [];
+  const [history, { refetch: refetchHistory }] = createResource(() => props.inst.id, (id) => api.gameLog(id).catch(() => []));
+  // Fallback: while the game runs but nothing has streamed in, re-read its own latest.log.
+  const poll = setInterval(() => {
+    if (app.launch[props.inst.id]?.phase === "running" && !app.logs[props.inst.id]?.length) refetchHistory();
+  }, 2000);
+  onCleanup(() => clearInterval(poll));
+  const lines = () => (app.logs[props.inst.id]?.length ? app.logs[props.inst.id]! : history() ?? []);
   const shown = createMemo(() => (q() ? lines().filter((l) => l.toLowerCase().includes(q().toLowerCase())) : lines()));
   let box!: HTMLPreElement;
   createEffect(() => {

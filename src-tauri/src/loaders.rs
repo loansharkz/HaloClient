@@ -7,7 +7,6 @@ use std::path::Path;
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::core::{emit_progress, get_json, get_json_cached, write_json, Paths};
 use crate::download::{DlItem, Downloader};
@@ -226,15 +225,7 @@ async fn run_installer(app: &AppHandle, java: &Path, installer: &Path, flag: &st
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let readers: [Box<dyn tokio::io::AsyncRead + Unpin + Send>; 2] = [Box::new(child.stdout.take().unwrap()), Box::new(child.stderr.take().unwrap())];
     for r in readers {
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(l)) = lines.next_line().await {
-                if tx.send(l).is_err() {
-                    break;
-                }
-            }
-        });
+        crate::core::spawn_line_reader(r, tx.clone());
     }
     drop(tx);
     let mut n = 0u64;

@@ -681,10 +681,10 @@ async fn running_instances(state: S<'_>) -> CmdResult<Vec<String>> {
 
 #[tauri::command]
 async fn game_log(state: S<'_>, id: String) -> CmdResult<Vec<String>> {
-    if let Some(buf) = state.logs.lock().unwrap().get(&id) {
+    if let Some(buf) = state.logs.lock().unwrap().get(&id).filter(|b| !b.is_empty()) {
         return Ok(buf.iter().cloned().collect());
     }
-    // Not launched this session: show the game's own latest.log.
+    // Nothing streamed (yet): show the game's own latest.log.
     let p = instances::game_dir(&state.paths, &id).join("logs").join("latest.log");
     Ok(std::fs::read_to_string(p).map(|s| s.lines().rev().take(5000).collect::<Vec<_>>().into_iter().rev().map(String::from).collect()).unwrap_or_default())
 }
