@@ -258,10 +258,8 @@ async fn auth_cancel(state: S<'_>, flow_id: String) -> CmdResult<()> {
 #[tauri::command]
 async fn add_offline(state: S<'_>, name: String) -> CmdResult<Account> {
     let mut store = state.accounts.lock().await;
-    // Offline play is for people who own the game: require a Microsoft account first.
-    if !store.accounts.iter().any(|a| a.kind == "microsoft") {
-        return Err(core::CmdError("Add a Microsoft account that owns Minecraft: Java Edition first.".into()));
-    }
+    // Offline profiles can't join online-mode servers, so they're allowed without a
+    // Microsoft account (needed while Halo's Azure app awaits Mojang approval).
     let acc = auth::offline_account(name.trim())?;
     store.upsert(acc.clone());
     store.save(&state.paths)?;

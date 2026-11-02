@@ -37,7 +37,7 @@ Answers from Leo's Step 0 question round (2026-11-01), plus choices Claude made 
 
 ## Accounts
 - Multiple Microsoft accounts with one-click switching and a per-instance default.
-- **Offline profiles: yes.** Labeled "Offline", for singleplayer/LAN/offline-mode servers only. **[default]** Creating one requires at least one owned Microsoft account to have been added.
+- **Offline profiles: yes.** Labeled "Offline", for singleplayer/LAN/offline-mode servers only. Changed 2026-11-02: they no longer require a Microsoft account first, since nobody can add one until Mojang approves Halo's Azure app. They still can't join online-mode servers.
 - Azure app: **not registered yet.** Claude builds the device-code auth flow and writes README steps; it works once `HALO_MSA_CLIENT_ID` is set.
 - Tokens are stored in the Windows Credential Manager (`keyring` crate) and never logged.
 
@@ -90,7 +90,6 @@ PvP players, modpack players, SMP/economy players.
 - **Data packs** install per world (the UI asks which world).
 - **Image CSP allows any https image**, so mod descriptions render their screenshots. Scripts, frames and styles from descriptions are stripped (DOMPurify).
 - **Secrets** (MSA client id, CurseForge key, Sentry DSN, Discord app id) are compiled into the Rust binary from CI secrets and never sent to the UI.
-- **Offline profiles** require at least one Microsoft account first.
 - **Forge/NeoForge** are installed by running the official installer headless against Halo's data folder, retrying with the other flag spelling when one isn't recognized.
 
 ## Multiplayer test log

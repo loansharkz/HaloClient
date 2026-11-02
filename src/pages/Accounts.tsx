@@ -88,14 +88,13 @@ function AddMicrosoft(props: { open: boolean; onClose: () => void }) {
 
 function AddOffline(props: { open: boolean; onClose: () => void }) {
   const [name, setName] = createSignal("");
-  const hasMs = () => app.accounts.some((a) => a.kind === "microsoft");
   const valid = () => /^[A-Za-z0-9_]{3,16}$/.test(name());
   return (
     <Modal open={props.open} onClose={props.onClose} width={420} label="Add offline profile">
       <div class="p-6">
         <h2 class="text-lg font-bold">Add offline profile</h2>
         <p class="text-muted text-[12.5px] mt-1">For singleplayer, LAN and offline-mode servers. Offline profiles can't join online-mode servers like Hypixel.</p>
-        <Show when={hasMs()} fallback={<div class="glass-flat p-3 mt-4 text-[12.5px]">Add a Microsoft account that owns Minecraft: Java Edition first.</div>}>
+        <Show when={true}>
           <form onSubmit={async (e) => {
             e.preventDefault();
             if (!valid()) return;
