@@ -116,6 +116,13 @@ pub struct Settings {
     pub crash_reports: bool,
     pub crash_reports_prompted: bool,
     pub auto_update: bool,
+    /// Instant Play: keep the last instance pre-loaded and hidden, ready for Play.
+    pub instant_play: bool,
+    /// Keep Halo running in the system tray when its window is closed.
+    pub run_in_background: bool,
+    pub start_with_windows: bool,
+    /// AppCDS on Windows (opt-in until benchmarked there).
+    pub class_data_sharing: bool,
     pub auto_java: bool,
     pub preflight: bool,
     pub show_reserved_slots: bool,
@@ -139,6 +146,10 @@ impl Default for Settings {
             crash_reports: true,
             crash_reports_prompted: false,
             auto_update: true,
+            instant_play: true,
+            run_in_background: true,
+            start_with_windows: true,
+            class_data_sharing: false,
             auto_java: true,
             preflight: true,
             show_reserved_slots: false,

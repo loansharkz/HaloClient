@@ -88,7 +88,7 @@ const asHit = (p: P): T.SearchHit => ({
 
 let settings: T.Settings = {
   theme: "dark", accentHue: 275, animatedBackground: true, defaultRamMb: 4096, downloadThreads: 12, closeOnLaunch: false, discordRpc: true,
-  crashReports: true, crashReportsPrompted: true, autoUpdate: true, autoJava: true, preflight: true, showReservedSlots: false, browseView: "list",
+  crashReports: true, crashReportsPrompted: true, autoUpdate: true, instantPlay: true, runInBackground: true, startWithWindows: true, classDataSharing: false, autoJava: true, preflight: true, showReservedSlots: false, browseView: "list",
   activeAccountId: "a1", lastInstanceId: "halo-pvp", msaClientId: null,
 };
 try {
@@ -293,6 +293,8 @@ export async function mockCall(cmd: string, a: Record<string, any>): Promise<unk
       emit("launch-state", { instanceId: a.id, phase: "stopped", message: "Game closed" });
       return;
     }
+    case "launch_states":
+      return [...running].map((id) => ({ instanceId: id, phase: "running" }));
     case "running_instances":
       return [...running];
     case "game_log":

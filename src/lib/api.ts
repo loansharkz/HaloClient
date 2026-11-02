@@ -106,6 +106,7 @@ export const api = {
   launch: (id: string, server?: string | null) => call<void>("launch_instance", { id, server: server ?? null }),
   stop: (id: string) => call<void>("stop_instance", { id }),
   running: () => call<string[]>("running_instances"),
+  launchStates: () => call<{ instanceId: string; phase: T.LaunchState["phase"] }[]>("launch_states"),
   gameLog: (id: string) => call<string[]>("game_log", { id }),
 
   recentServers: () => call<T.RecentServer[]>("recent_servers"),

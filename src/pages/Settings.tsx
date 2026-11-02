@@ -1,5 +1,5 @@
 import { For, Show, createSignal, type JSX } from "solid-js";
-import { Bug, FolderOpen, Gamepad2, HardDrive, Info, KeyRound, LoaderCircle, Palette, RefreshCw } from "lucide-solid";
+import { Bug, FolderOpen, Zap, Gamepad2, HardDrive, Info, KeyRound, LoaderCircle, Palette, RefreshCw } from "lucide-solid";
 import { HaloLogo } from "../components/Icons";
 import { PageHeader, Toggle } from "../components/Shell";
 import { api, pickFile } from "../lib/api";
@@ -85,6 +85,18 @@ export default function Settings() {
             </Row>
           </Section>
 
+          <Section title="Instant Play" icon={Zap}>
+            <Row title="Instant Play" desc="Keeps your last instance loaded and hidden, so Play opens it in about a second. While it waits it's muted, runs at the lowest priority in efficiency mode, and its memory is moved out of RAM.">
+              <Toggle on={settings.instantPlay} onChange={(v) => setSettings("instantPlay", v)} label="Instant Play" />
+            </Row>
+            <Row title="Keep Halo in the tray" desc="Closing the window leaves Halo running in the system tray (the window itself is unloaded). Play from the tray icon.">
+              <Toggle on={settings.runInBackground} onChange={(v) => setSettings("runInBackground", v)} label="Keep Halo in the tray" />
+            </Row>
+            <Row title="Start with Windows" desc="Starts quietly in the tray when you sign in, so Instant Play is ready before you open Halo.">
+              <Toggle on={settings.startWithWindows} onChange={(v) => setSettings("startWithWindows", v)} label="Start with Windows" />
+            </Row>
+          </Section>
+
           <Section title="Game & performance" icon={Gamepad2}>
             <Row title="Default memory" desc={`${(settings.defaultRamMb / 1024).toFixed(1)} GB for new instances`}>
               <input id="set-ram" type="range" min={1024} max={16384} step={512} value={settings.defaultRamMb} class="!w-40" onInput={(e) => setSettings("defaultRamMb", +e.currentTarget.value)} aria-label="Default memory" />
@@ -94,6 +106,9 @@ export default function Settings() {
             </Row>
             <Row title="Pre-flight on open" desc="Refreshes your login and checks the last instance in the background, so Play starts right away">
               <Toggle on={settings.preflight} onChange={(v) => setSettings("preflight", v)} label="Pre-flight" />
+            </Row>
+            <Row title="Class-data sharing" desc="Reuses Java's loaded classes between launches. Experimental on Windows: compare the boot time with it on and off.">
+              <Toggle on={settings.classDataSharing} onChange={(v) => setSettings("classDataSharing", v)} label="Class-data sharing" />
             </Row>
             <Row title="Hide launcher while playing">
               <Toggle on={settings.closeOnLaunch} onChange={(v) => setSettings("closeOnLaunch", v)} label="Hide launcher" />

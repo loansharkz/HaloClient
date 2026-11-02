@@ -66,6 +66,49 @@ pub struct RunningGame {
     pub pid: Option<u32>,
     pub started: Instant,
     pub kill: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Set for Instant Play: the game loads hidden and waits for Play.
+    pub prewarm: Option<Arc<std::sync::Mutex<Prewarm>>>,
+}
+
+/// State of a game pre-loaded by Instant Play.
+pub struct Prewarm {
+    pub pid: u32,
+    pub created: Instant,
+    pub ready: bool,
+    pub revealed_at: Option<Instant>,
+    pub hidden: Vec<isize>,
+    pub ended: bool,
+    pub last_trim: Option<Instant>,
+}
+
+impl RunningGame {
+    /// True while this is an Instant Play game that hasn't been shown yet.
+    pub fn waiting(&self) -> bool {
+        self.prewarm.as_ref().map(|p| p.lock().unwrap().revealed_at.is_none()).unwrap_or(false)
+    }
+    pub fn phase(&self) -> &'static str {
+        match &self.prewarm {
+            Some(p) => {
+                let p = p.lock().unwrap();
+                if p.revealed_at.is_some() {
+                    "running"
+                } else if p.ready {
+                    "ready"
+                } else {
+                    "prewarming"
+                }
+            }
+            None => "running",
+        }
+    }
+}
+
+/// What the caller should do after a game exits.
+pub struct ExitOutcome {
+    /// Start a new Instant Play pre-load (after a played game or an invalidation).
+    pub reprewarm: bool,
+    /// An unshown pre-load ended on its own: stop auto-retrying until something changes.
+    pub prewarm_failed: bool,
 }
 
 fn emit_state<R: tauri::Runtime>(app: &AppHandle<R>, id: &str, phase: &str, message: impl Into<String>) {
@@ -87,7 +130,7 @@ pub fn split_address(addr: &str) -> (String, u16) {
     }
 }
 
-pub async fn launch(app: AppHandle, state: Arc<AppState>, instance_id: String, server: Option<String>) -> anyhow::Result<()> {
+pub async fn launch(app: AppHandle, state: Arc<AppState>, instance_id: String, server: Option<String>, prewarm: bool) -> anyhow::Result<()> {
     {
         let running = state.running.lock().await;
         if running.contains_key(&instance_id) {
@@ -100,15 +143,17 @@ pub async fn launch(app: AppHandle, state: Arc<AppState>, instance_id: String, s
             bail!("This instance is already launching.");
         }
     }
-    let result = launch_inner(&app, &state, &instance_id, server).await;
+    let result = launch_inner(&app, &state, &instance_id, server, prewarm).await;
     state.launching.lock().await.remove(&instance_id);
     if let Err(e) = &result {
-        emit_state(&app, &instance_id, "error", format!("{e:#}"));
+        // A failed background pre-load shouldn't look like a failed Play.
+        emit_state(&app, &instance_id, if prewarm { "stopped" } else { "error" }, format!("{e:#}"));
     }
     result
 }
 
-async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str, server: Option<String>) -> anyhow::Result<()> {
+async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str, server: Option<String>, prewarm: bool) -> anyhow::Result<()> {
+    let prep = if prewarm { "prewarming" } else { "preparing" };
     let clicked = Instant::now();
     let paths = &state.paths;
     let http = &state.http;
@@ -118,7 +163,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     std::fs::create_dir_all(&game_dir)?;
 
     // --- account
-    emit_state(app, instance_id, "preparing", "Checking account");
+    emit_state(app, instance_id, prep, "Checking account");
     let account_id = inst.account_id.clone().or(settings.active_account_id.clone());
     let mut account = {
         let store = state.accounts.lock().await;
@@ -138,7 +183,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     let dl = Downloader { http, paths, app, threads: settings.download_threads.clamp(1, 64) as usize, verify_existing: false };
 
     // --- loader + version
-    emit_state(app, instance_id, "preparing", "Preparing game version");
+    emit_state(app, instance_id, prep, "Preparing game version");
     let version_ready = inst.version_id.as_ref().map(|v| versions::version_json_path(paths, v).exists()).unwrap_or(false);
     if !version_ready {
         let vanilla = versions::ensure_vanilla_json(http, paths, &inst.mc_version).await?;
@@ -158,14 +203,14 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
         .unwrap_or(false);
     let features = Features { custom_resolution: inst.width.is_some() && inst.height.is_some(), quick_play_multiplayer: server.is_some() && supports_quick_play };
 
-    emit_state(app, instance_id, "preparing", "Checking game files");
+    emit_state(app, instance_id, prep, "Checking game files");
     let prepared = versions::prepare(&dl, &version_id, &game_dir, &features).await?;
 
     // --- Halo HUD keeps itself in sync with the bundled build
     crate::content::sync_halo_hud(app, paths, &inst).ok();
 
     // --- java
-    emit_state(app, instance_id, "preparing", "Checking Java");
+    emit_state(app, instance_id, prep, "Checking Java");
     let (java, java_major) = match inst.java_path.as_deref().filter(|p| !p.is_empty()) {
         Some(custom) => {
             let p = PathBuf::from(custom);
@@ -178,16 +223,18 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
 
     // --- args
     let ram = inst.ram_mb.unwrap_or(settings.default_ram_mb).clamp(512, 65536);
-    let args = build_args(paths, &inst, &prepared, &auth, &game_dir, ram, java_major, server.as_deref(), &features);
+    // AppCDS is opt-in on Windows (Settings → Class-data sharing) until benchmarked there.
+    let cds_allowed = !cfg!(windows) || settings.class_data_sharing || std::env::var("HALO_FORCE_CDS").is_ok();
+    let args = build_args(paths, &inst, &prepared, &auth, &game_dir, ram, java_major, server.as_deref(), &features, cds_allowed);
 
     // --- pre-launch hook
     if let Some(cmd) = inst.pre_launch.as_deref().filter(|c| !c.trim().is_empty()) {
-        emit_state(app, instance_id, "preparing", "Running pre-launch command");
+        emit_state(app, instance_id, prep, "Running pre-launch command");
         run_hook(cmd, &game_dir, &inst).await?;
     }
 
     // --- spawn
-    emit_state(app, instance_id, "preparing", "Starting Minecraft");
+    emit_state(app, instance_id, prep, "Starting Minecraft");
     // Console java.exe (window hidden) gives the most reliable output capture on Windows.
     let java = console_java(java);
     // Always leave a launch log, even if the game never starts.
@@ -224,22 +271,20 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     let child = spawned.with_context(|| format!("couldn't start Java at {}", java.display()))?;
     let pid = child.id();
     let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
-    state.running.lock().await.insert(instance_id.to_string(), RunningGame { pid, started: Instant::now(), kill: Some(kill_tx) });
-    emit_state(app, instance_id, "running", "Game running");
+    let pw = match (prewarm, pid) {
+        (true, Some(pid)) => Some(Arc::new(std::sync::Mutex::new(Prewarm { pid, created: Instant::now(), ready: false, revealed_at: None, hidden: vec![], ended: false, last_trim: None }))),
+        _ => None,
+    };
+    state.running.lock().await.insert(instance_id.to_string(), RunningGame { pid, started: Instant::now(), kill: Some(kill_tx), prewarm: pw.clone() });
 
-    inst.last_played = Some(now_ms());
-    instances::save(paths, &inst)?;
-    {
-        let mut s = state.settings.write().await;
-        s.last_instance_id = Some(instance_id.to_string());
-        let _ = crate::core::write_json(&paths.settings_file(), &*s);
-    }
-    if settings.discord_rpc {
-        state.discord.playing(&inst, server.as_deref());
-    }
-    if settings.close_on_launch {
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.hide();
+    match (&pw, pid) {
+        (Some(pw), Some(pid)) => {
+            emit_state(app, instance_id, "prewarming", "Getting ready in the background");
+            spawn_hider(pw.clone(), pid);
+        }
+        _ => {
+            emit_state(app, instance_id, "running", "Game running");
+            on_shown(app, state, &mut inst, server.as_deref(), &settings).await?;
         }
     }
 
@@ -248,14 +293,122 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     let state2 = state.clone();
     let id = instance_id.to_string();
     let token = auth.access_token.clone();
-    let cds = inst.cds && java_major >= 19 && (!cfg!(windows) || std::env::var("HALO_FORCE_CDS").is_ok());
+    let cds = inst.cds && java_major >= 19 && cds_allowed;
     tokio::spawn(async move {
-        let res = monitor(&app2, &state2, &id, child, kill_rx, clicked, &token, cds, &launch_log, log_offset).await;
-        if let Err(e) = res {
-            log::error!("monitor failed: {e:#}");
+        match monitor(&app2, &state2, &id, child, kill_rx, clicked, &token, cds, &launch_log, log_offset, pw).await {
+            Ok(outcome) => {
+                if outcome.prewarm_failed {
+                    state2.prewarm_paused.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                if outcome.reprewarm {
+                    crate::schedule_prewarm(app2.clone(), state2.clone(), std::time::Duration::from_secs(5));
+                }
+            }
+            Err(e) => log::error!("monitor failed: {e:#}"),
         }
     });
     Ok(())
+}
+
+/// Bookkeeping for when a game becomes visible (normal launch, or Play on a pre-load).
+async fn on_shown(app: &AppHandle, state: &Arc<AppState>, inst: &mut Instance, server: Option<&str>, settings: &crate::core::Settings) -> anyhow::Result<()> {
+    inst.last_played = Some(now_ms());
+    instances::save(&state.paths, inst)?;
+    {
+        let mut s = state.settings.write().await;
+        s.last_instance_id = Some(inst.id.clone());
+        let _ = crate::core::write_json(&state.paths.settings_file(), &*s);
+    }
+    if settings.discord_rpc {
+        state.discord.playing(inst, server);
+    }
+    if settings.close_on_launch {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
+    }
+    Ok(())
+}
+
+/// Keeps a pre-loading game's windows hidden until Play; re-trims memory every
+/// 10 minutes while it waits.
+fn spawn_hider(pw: Arc<std::sync::Mutex<Prewarm>>, pid: u32) {
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        loop {
+            {
+                let mut p = pw.lock().unwrap();
+                if p.revealed_at.is_some() || p.ended {
+                    return;
+                }
+                // Hide under the lock so Play can never be undone by a late hide.
+                let newly = crate::winctl::hide_visible(pid);
+                p.hidden.extend(newly);
+                p.hidden.dedup();
+                if p.ready && p.last_trim.map(|t| t.elapsed().as_secs() >= 600).unwrap_or(false) {
+                    let _ = crate::winctl::set_background(pid, true);
+                    p.last_trim = Some(Instant::now());
+                }
+            }
+            // Poll fast while the window is being created, then relax.
+            let ms = if start.elapsed().as_secs() < 120 { 10 } else { 250 };
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+    });
+}
+
+/// Once a pre-load reaches the title screen: mute it, then drop it to the
+/// lowest priority with efficiency mode and trimmed memory.
+fn settle_prewarm(pw: Arc<std::sync::Mutex<Prewarm>>, pid: u32) {
+    std::thread::spawn(move || {
+        // The audio session appears when the sound engine starts; keep trying briefly.
+        for _ in 0..30 {
+            if pw.lock().unwrap().revealed_at.is_some() {
+                return;
+            }
+            if crate::winctl::set_mute(pid, true).unwrap_or(false) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        // Let the title screen finish loading before trimming memory.
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let mut p = pw.lock().unwrap();
+        if p.revealed_at.is_none() && !p.ended {
+            let _ = crate::winctl::set_background(pid, true);
+            p.last_trim = Some(Instant::now());
+        }
+    });
+}
+
+/// Shows a pre-loaded game: restores sound and priority, shows its window and
+/// starts playtime/Discord. Returns false if there was nothing to reveal.
+pub async fn reveal(app: &AppHandle, state: &Arc<AppState>, id: &str) -> anyhow::Result<bool> {
+    let (pid, pw) = {
+        let running = state.running.lock().await;
+        match running.get(id) {
+            Some(g) if g.waiting() => (g.pid, g.prewarm.clone().unwrap()),
+            _ => return Ok(false),
+        }
+    };
+    let hidden = {
+        let mut p = pw.lock().unwrap();
+        p.revealed_at = Some(Instant::now());
+        p.hidden.clone()
+    };
+    if let Some(pid) = pid {
+        let _ = crate::winctl::set_background(pid, false);
+        crate::winctl::show(pid, &hidden);
+        tokio::task::spawn_blocking(move || {
+            let _ = crate::winctl::set_mute(pid, false);
+        });
+    }
+    emit_state(app, id, "running", "Game running");
+    let settings = state.settings.read().await.clone();
+    let mut inst = instances::load(&state.paths, id)?;
+    on_shown(app, state, &mut inst, None, &settings).await?;
+    log::info!("{id}: Instant Play reveal");
+    Ok(true)
 }
 
 fn value_contains(v: &StringOrVec, needle: &str) -> bool {
@@ -295,6 +448,7 @@ pub fn build_args(
     java_major: u32,
     server: Option<&str>,
     f: &Features,
+    cds_allowed: bool,
 ) -> Vec<String> {
     let sep = if cfg!(windows) { ";" } else { ":" };
     let mut seen = std::collections::HashSet::new();
@@ -358,9 +512,7 @@ pub fn build_args(
     // AppCDS: Java 19+ creates and reuses a per-instance class archive automatically.
     // The JVM refuses to archive when the classpath has directories, so only jars qualify.
     let all_jars = p.classpath.iter().all(|c| c.extension().map(|e| e == "jar").unwrap_or(false));
-    // Off on Windows until benchmarks show it helps there (docs/BENCHMARKS.md).
-    let cds_platform_ok = !cfg!(windows) || std::env::var("HALO_FORCE_CDS").is_ok();
-    if inst.cds && java_major >= 19 && all_jars && cds_platform_ok {
+    if inst.cds && java_major >= 19 && all_jars && cds_allowed {
         let dir = paths.instance(&inst.id).join(".halo");
         let _ = std::fs::create_dir_all(&dir);
         let name: String = p.version.id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
@@ -503,7 +655,8 @@ async fn monitor<R: tauri::Runtime>(
     cds: bool,
     launch_log: &Path,
     log_offset: u64,
-) -> anyhow::Result<()> {
+    prewarm: Option<Arc<std::sync::Mutex<Prewarm>>>,
+) -> anyhow::Result<ExitOutcome> {
     let paths = &state.paths;
     let mut got_output = false;
     let mut warned_silent = false;
@@ -548,7 +701,7 @@ async fn monitor<R: tauri::Runtime>(
                         if boot_ms.is_none() && BOOT_MARKERS.iter().any(|m| line.contains(m)) {
                             let ms = clicked.elapsed().as_millis() as u64;
                             boot_ms = Some(ms);
-                            let _ = app.emit("game-boot", serde_json::json!({ "instanceId": id, "bootMs": ms }));
+                            on_boot(app, id, ms, &prewarm);
                         }
                         if let Some(c) = connect_re.captures(&line) {
                             let port: u16 = c[2].parse().unwrap_or(25565);
@@ -594,7 +747,7 @@ async fn monitor<R: tauri::Runtime>(
                 if fresh && std::fs::read_to_string(&log).map(|t| BOOT_MARKERS.iter().any(|m| t.contains(m))).unwrap_or(false) {
                     let ms = clicked.elapsed().as_millis() as u64;
                     boot_ms = Some(ms);
-                    let _ = app.emit("game-boot", serde_json::json!({ "instanceId": id, "bootMs": ms }));
+                    on_boot(app, id, ms, &prewarm);
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)), if !batch.is_empty() => {
@@ -610,7 +763,17 @@ async fn monitor<R: tauri::Runtime>(
         use std::io::Write;
         let _ = writeln!(f, "--- process exited: {:?} after {}s", status.code(), started.elapsed().as_secs());
     }
-    let played = started.elapsed().as_secs();
+    // For Instant Play, playtime starts when the window was shown.
+    let (was_prewarm, revealed_at) = match &prewarm {
+        Some(p) => {
+            let mut p = p.lock().unwrap();
+            p.ended = true;
+            (true, p.revealed_at)
+        }
+        None => (false, None),
+    };
+    let shown = !was_prewarm || revealed_at.is_some();
+    let played = if was_prewarm { revealed_at.map(|t| t.elapsed().as_secs()).unwrap_or(0) } else { started.elapsed().as_secs() };
     state.running.lock().await.remove(id);
     let code = status.code();
     let mut inst = instances::load(paths, id)?;
@@ -624,7 +787,7 @@ async fn monitor<R: tauri::Runtime>(
     }
     instances::save(paths, &inst)?;
 
-    let crash = if !killed && code.map(|c| c != 0).unwrap_or(true) {
+    let crash = if shown && !killed && code.map(|c| c != 0).unwrap_or(true) {
         let log_text = state.logs.lock().unwrap().get(id).map(|b| b.iter().cloned().collect::<Vec<_>>().join("\n")).unwrap_or_default();
         let crash_file = newest_crash_report(&instances::game_dir(paths, id), started);
         let crash_text = crash_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
@@ -633,16 +796,38 @@ async fn monitor<R: tauri::Runtime>(
         None
     };
 
-    if let Some(cmd) = inst.post_exit.as_deref().filter(|c| !c.trim().is_empty()) {
-        let _ = run_hook(cmd, &instances::game_dir(paths, id), &inst).await;
-    }
-    state.discord.clear();
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
+    if shown {
+        if let Some(cmd) = inst.post_exit.as_deref().filter(|c| !c.trim().is_empty()) {
+            let _ = run_hook(cmd, &instances::game_dir(paths, id), &inst).await;
+        }
+        state.discord.clear();
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+        }
     }
     let _ = app.emit("game-exit", GameExit { instance_id: id.into(), code, played_secs: played, boot_ms, crash, killed });
     emit_state(app, id, "stopped", "Game closed");
-    Ok(())
+    Ok(ExitOutcome {
+        // Pre-load again after a real play session, or after we stopped a pre-load ourselves.
+        reprewarm: shown || killed,
+        prewarm_failed: was_prewarm && !shown && !killed,
+    })
+}
+
+fn on_boot<R: tauri::Runtime>(app: &AppHandle<R>, id: &str, ms: u64, prewarm: &Option<Arc<std::sync::Mutex<Prewarm>>>) {
+    let _ = app.emit("game-boot", serde_json::json!({ "instanceId": id, "bootMs": ms, "background": prewarm.is_some() }));
+    if let Some(pw) = prewarm {
+        let pid = {
+            let mut p = pw.lock().unwrap();
+            if p.revealed_at.is_some() {
+                return;
+            }
+            p.ready = true;
+            p.pid
+        };
+        settle_prewarm(pw.clone(), pid);
+        emit_state(app, id, "ready", "Instant Play ready");
+    }
 }
 
 fn newest_crash_report(game_dir: &Path, since: Instant) -> Option<PathBuf> {
@@ -811,7 +996,7 @@ mod jvm_tests {
         let game_dir = tmp.join("game");
         std::fs::create_dir_all(&game_dir).unwrap();
         let f = Features { custom_resolution: false, quick_play_multiplayer: true };
-        let args = build_args(&paths, &inst, &prepared, &auth, &game_dir, 1024, 21, Some("mc.hypixel.net"), &f);
+        let args = build_args(&paths, &inst, &prepared, &auth, &game_dir, 1024, 21, Some("mc.hypixel.net"), &f, true);
 
         assert!(args.iter().all(|a| !a.contains("${")), "unsubstituted placeholder in {args:?}");
         assert!(args.contains(&"-Xmx1024M".to_string()));
@@ -843,7 +1028,7 @@ mod jvm_tests {
         let mut dir_cp = prepared.classpath.clone();
         dir_cp.push(classes.clone());
         let p2 = Prepared { classpath: dir_cp, ..prepared };
-        let a2 = build_args(&paths, &inst, &p2, &auth, &game_dir, 1024, 21, None, &Features::default());
+        let a2 = build_args(&paths, &inst, &p2, &auth, &game_dir, 1024, 21, None, &Features::default(), true);
         assert!(!a2.iter().any(|a| a.contains("AutoCreateSharedArchive")), "CDS must be off when the classpath has directories");
         let jsa = paths.instance("test").join(".halo").join("fake-1.0.jsa");
         assert!(jsa.exists(), "CDS archive should have been created at {}", jsa.display());
@@ -863,7 +1048,7 @@ mod jvm_tests {
         let prepared = Prepared { version, classpath: vec![tmp.join("a.jar")], natives_dir: tmp.join("n"), client_jar: tmp.join("a.jar"), assets_index: "1.8".into(), game_assets_dir: tmp.clone(), java_major: 8 };
         let inst = Instance { id: "x".into(), cds: true, ..Default::default() };
         let auth = LaunchAuth { username: "Steve".into(), uuid: "u".into(), access_token: "tok".into(), user_type: "msa" };
-        let args = build_args(&paths, &inst, &prepared, &auth, &tmp, 2048, 8, Some("play.example.com:25570"), &Features::default());
+        let args = build_args(&paths, &inst, &prepared, &auth, &tmp, 2048, 8, Some("play.example.com:25570"), &Features::default(), true);
         assert!(args.contains(&"-cp".to_string()));
         assert!(!args.iter().any(|a| a.contains("AutoCreateSharedArchive")), "no CDS on Java 8");
         let i = args.iter().position(|a| a == "--server").unwrap();
@@ -887,7 +1072,7 @@ mod jvm_tests {
         };
         let prepared = Prepared { version, classpath: vec![tmp.join("a.jar")], natives_dir: tmp.clone(), client_jar: tmp.join("a.jar"), assets_index: "1".into(), game_assets_dir: tmp.clone(), java_major: 21 };
         let auth = LaunchAuth { username: "a".into(), uuid: "u".into(), access_token: "0".into(), user_type: "legacy" };
-        let args = build_args(&paths, &Instance::default(), &prepared, &auth, &tmp, 1024, 21, None, &Features::default());
+        let args = build_args(&paths, &Instance::default(), &prepared, &auth, &tmp, 1024, 21, None, &Features::default(), true);
         assert!(!args.iter().any(|a| a == "--clientId" || a == "--xuid"), "{args:?}");
         let i = args.iter().position(|a| a == "--versionType").unwrap();
         assert_eq!(args[i + 1], "Halo Client");
@@ -952,12 +1137,13 @@ mod monitor_tests {
             logs: Default::default(),
             discord: Default::default(),
             update: Default::default(),
+            prewarm_paused: Default::default(),
             paths: paths.clone(),
         });
         let (_kill_tx, kill_rx) = tokio::sync::oneshot::channel();
         let r = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            monitor(app.handle(), &state, &inst.id, child, kill_rx, Instant::now(), "0", false, &launch_log, offset),
+            monitor(app.handle(), &state, &inst.id, child, kill_rx, Instant::now(), "0", false, &launch_log, offset, None),
         )
         .await;
         assert!(r.is_ok(), "monitor hung");
@@ -973,5 +1159,27 @@ mod monitor_tests {
         let log = std::fs::read_to_string(&launch_log).unwrap();
         assert!(log.contains("--- process exited: Some(0)"), "exit not recorded");
         let _ = std::fs::remove_dir_all(tmp);
+    }
+}
+
+#[cfg(test)]
+mod prewarm_tests {
+    use super::*;
+
+    #[test]
+    fn phases_follow_prewarm_lifecycle() {
+        let normal = RunningGame { pid: Some(1), started: Instant::now(), kill: None, prewarm: None };
+        assert_eq!(normal.phase(), "running");
+        assert!(!normal.waiting());
+
+        let pw = Arc::new(std::sync::Mutex::new(Prewarm { pid: 1, created: Instant::now(), ready: false, revealed_at: None, hidden: vec![], ended: false, last_trim: None }));
+        let g = RunningGame { pid: Some(1), started: Instant::now(), kill: None, prewarm: Some(pw.clone()) };
+        assert_eq!(g.phase(), "prewarming");
+        assert!(g.waiting());
+        pw.lock().unwrap().ready = true;
+        assert_eq!(g.phase(), "ready");
+        pw.lock().unwrap().revealed_at = Some(Instant::now());
+        assert_eq!(g.phase(), "running");
+        assert!(!g.waiting());
     }
 }

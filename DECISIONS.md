@@ -108,6 +108,17 @@ PvP players, modpack players, SMP/economy players.
   - CDS is off on Windows until benchmarked (`HALO_FORCE_CDS` re-enables it).
   - Options with empty values (`--clientId`, `--xuid`) are dropped.
 
+- **Instant Play (v0.1.5).** Leo saw 10.4 s Play → title for Vanilla 1.21.11 and wanted ~4 s, without Halo's window having to stay open.
+  - Halo runs in the system tray: starts with Windows (`--background`), and closing the window unloads the webview.
+  - It pre-loads the last-played instance with its windows hidden from creation (Halo hides them from outside the game, so every version and loader works without a mod).
+  - At the title screen the game is muted (Windows audio session), set to idle priority plus Windows efficiency mode, and its working set is trimmed (re-trimmed every 10 min).
+  - Play (in the app or from the tray) shows the window instantly and restores sound and priority. Playtime and Discord start then.
+  - The pre-load restarts on account, instance, mod or setting changes and every 12 h, so the login stays fresh. Quick-join with a server launches normally.
+  - A pre-load that crashes on its own pauses auto-retry until something changes.
+  - Hidden pre-loads are terminated when Halo quits.
+  - Windows-only. The window, audio and priority calls are compiled in CI on Windows (`backend-windows` job). They haven't been run on a real PC yet.
+- **Class-data sharing** is a Settings toggle (default off on Windows) so Leo can compare boot times.
+
 ## Multiplayer test log
 | Phase | Date | Online server | Local server | Result |
 |---|---|---|---|---|

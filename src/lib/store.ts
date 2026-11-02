@@ -14,6 +14,10 @@ const DEFAULT_SETTINGS: T.Settings = {
   crashReports: true,
   crashReportsPrompted: true,
   autoUpdate: true,
+  instantPlay: true,
+  runInBackground: true,
+  startWithWindows: true,
+  classDataSharing: false,
   autoJava: true,
   preflight: true,
   showReservedSlots: false,
@@ -138,8 +142,9 @@ export async function launchInstance(id: string, server?: string | null) {
     toast("Add an account first", "warn");
     return;
   }
-  setApp("launch", id, { phase: "preparing", message: "Starting" });
-  setApp("logs", id, []);
+  const instant = app.launch[id]?.phase === "ready" || app.launch[id]?.phase === "prewarming";
+  setApp("launch", id, { phase: "preparing", message: instant ? "Opening" : "Starting" });
+  if (!instant) setApp("logs", id, []);
   try {
     await api.launch(id, server);
   } catch (e) {
@@ -169,7 +174,8 @@ export async function init() {
     toast(`Couldn't load settings: ${e}`, "warn");
   }
   await Promise.all([refreshAccounts(), refreshInstances(), refreshRecentServers()]).catch((e) => toast(String(e), "warn"));
-  for (const id of await api.running().catch(() => [] as string[])) setApp("launch", id, { phase: "running", message: "Game running" });
+  // Restore live game states (the window may have been reopened from the tray).
+  for (const s of await api.launchStates().catch(() => [])) setApp("launch", s.instanceId, { phase: s.phase, message: "" });
   setApp("ready", true);
 
   // Persist settings (debounced) whenever they change after load.
@@ -200,8 +206,9 @@ export async function init() {
       return next.length > 5000 ? next.slice(-5000) : next;
     });
   });
-  on<{ instanceId: string; bootMs: number }>("game-boot", (b) => {
+  on<{ instanceId: string; bootMs: number; background?: boolean }>("game-boot", (b) => {
     setApp("instances", (i) => i.id === b.instanceId, "lastBootMs", b.bootMs);
+    if (b.background) return; // Instant Play pre-load: stay quiet
     toast(`${instanceById(b.instanceId)?.name ?? "Game"} reached the title screen in ${(b.bootMs / 1000).toFixed(1)}s`, "ok");
   });
   on<T.GameExit>("game-exit", (e) => {

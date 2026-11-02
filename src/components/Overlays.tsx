@@ -1,6 +1,6 @@
 import { useNavigate } from "@solidjs/router";
 import { Show, createSignal } from "solid-js";
-import { Bug, FileText, LoaderCircle, Play, Power, ShieldCheck, TriangleAlert, Wrench } from "lucide-solid";
+import { Bug, FileText, LoaderCircle, Play, Power, ShieldCheck, TriangleAlert, Wrench, Zap } from "lucide-solid";
 import { Modal } from "./Shell";
 import { api } from "../lib/api";
 import { app, attempt, instanceById, isBusy, launchInstance, refreshInstances, setApp, setSettings, settings, toast } from "../lib/store";
@@ -18,7 +18,7 @@ export function PlayButton(props: { instanceId: string; size?: "lg" | "md"; serv
     <button
       class="btn btn-primary"
       classList={{ "play-btn": props.size !== "md", "h-8 px-3": props.size === "md", running: phase() === "running" }}
-      title={phase() === "preparing" ? l()?.message : undefined}
+      title={phase() === "preparing" ? l()?.message : phase() === "ready" ? "Instant Play: opens in about a second" : undefined}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -26,7 +26,10 @@ export function PlayButton(props: { instanceId: string; size?: "lg" | "md"; serv
       }}
       disabled={phase() === "preparing"}
     >
-      <Show when={phase() === "idle" || phase() === "stopped" || phase() === "error"}>
+      <Show when={phase() === "ready"}>
+        <Zap size={props.size === "md" ? 14 : 20} fill="currentColor" /> {props.label ?? "Play"}
+      </Show>
+      <Show when={phase() === "idle" || phase() === "stopped" || phase() === "error" || phase() === "prewarming"}>
         <Play size={props.size === "md" ? 14 : 20} fill="currentColor" /> {props.label ?? "Play"}
       </Show>
       <Show when={phase() === "preparing"}>

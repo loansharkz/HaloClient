@@ -46,6 +46,24 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
+  # Compiles the Windows-only code (Instant Play window/audio/priority control).
+  backend-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Frontend dist placeholder
+        shell: bash
+        run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
+      - name: Clippy (Windows)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
   halo-hud:
     runs-on: ubuntu-24.04
     defaults:

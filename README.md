@@ -12,6 +12,7 @@ Halo is not affiliated with Mojang or Microsoft. It ships no Minecraft code or a
 | Instances | Vanilla, Fabric, Quilt, Forge, NeoForge. Per-instance RAM, Java, JVM args, window size, hooks, account. Duplicate, repair, delete, custom icons. |
 | Content | Modrinth search with facets, project pages (description, gallery, versions), one-click install with required dependencies, update checks, enable/disable, shader-loader detection, data packs per world. CurseForge behind an API key, respecting authors' `allowModDistribution`. |
 | Modpacks | Install Modrinth packs as new instances; import/export `.mrpack`; import Prism/MultiMC instances and vanilla `.minecraft`. |
+| Instant Play | Halo waits in the system tray (starts with Windows) with your last instance pre-loaded, hidden, muted and at minimum priority. Play shows it in about a second. |
 | Speed | Rust/Tauri launcher (small, opens fast), background pre-flight, parallel hash-verified downloads with a shared cache, managed Adoptium Java per version, tuned G1 flags, AppCDS on Java 19+, Performance profile (Sodium, Lithium, FerriteCore, ModernFix, ImmediatelyFast, Entity Culling), Play → title-screen timer. |
 | Multiplayer | Real Mojang session auth, Quick join for servers you've played (live favicon, MOTD, players, ping), servers.dat editor, quick-play straight into a server. |
 | Extras | Live logs with search and "copy for support", crash analyzer with one-click fixes, screenshot gallery, Discord Rich Presence, update check, opt-out crash reports. |

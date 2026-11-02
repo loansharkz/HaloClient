@@ -14,6 +14,10 @@ export interface Settings {
   crashReports: boolean;
   crashReportsPrompted: boolean;
   autoUpdate: boolean;
+  instantPlay: boolean;
+  runInBackground: boolean;
+  startWithWindows: boolean;
+  classDataSharing: boolean;
   autoJava: boolean;
   preflight: boolean;
   showReservedSlots: boolean;
@@ -217,7 +221,7 @@ export interface Screenshot {
 
 export interface LaunchState {
   instanceId: string;
-  phase: "preparing" | "running" | "stopped" | "error";
+  phase: "preparing" | "prewarming" | "ready" | "running" | "stopped" | "error";
   message: string;
 }
 

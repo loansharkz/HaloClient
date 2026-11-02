@@ -11,6 +11,7 @@ mod launch;
 mod loaders;
 mod servers;
 mod versions;
+mod winctl;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -36,6 +37,82 @@ pub struct AppState {
     pub logs: std::sync::Mutex<HashMap<String, VecDeque<String>>>,
     pub discord: extras::Discord,
     pub update: Mutex<Option<extras::UpdateReady>>,
+    /// Set when a background pre-load failed on its own; cleared when something changes.
+    pub prewarm_paused: std::sync::atomic::AtomicBool,
+}
+
+// ---------------------------------------------------------------------------
+// Instant Play: keep the last-played instance pre-loaded and hidden
+// ---------------------------------------------------------------------------
+
+/// Starts a background pre-load of the last instance if Instant Play is on and
+/// nothing else is running.
+pub async fn ensure_prewarm(app: AppHandle, state: Arc<AppState>) {
+    use std::sync::atomic::Ordering;
+    if !winctl::supported() || state.prewarm_paused.load(Ordering::SeqCst) {
+        return;
+    }
+    let settings = state.settings.read().await.clone();
+    if !settings.instant_play {
+        return;
+    }
+    if !state.running.lock().await.is_empty() || !state.launching.lock().await.is_empty() {
+        return;
+    }
+    let Some(id) = settings.last_instance_id.clone().filter(|id| instances::load(&state.paths, id).is_ok()) else { return };
+    if state.accounts.lock().await.accounts.is_empty() {
+        return;
+    }
+    log::info!("Instant Play: pre-loading {id}");
+    if let Err(e) = launch::launch(app, state.clone(), id, None, true).await {
+        log::warn!("Instant Play pre-load failed: {e:#}");
+        state.prewarm_paused.store(true, Ordering::SeqCst);
+    }
+}
+
+pub fn schedule_prewarm(app: AppHandle, state: Arc<AppState>, delay: std::time::Duration) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(delay).await;
+        ensure_prewarm(app, state).await;
+    });
+}
+
+/// Stops any hidden pre-load that hasn't been shown. Returns true if one was stopped.
+async fn stop_waiting_prewarms(state: &AppState, except: Option<&str>) -> bool {
+    let mut stopped = vec![];
+    {
+        let mut running = state.running.lock().await;
+        for (id, g) in running.iter_mut() {
+            if Some(id.as_str()) != except && g.waiting() {
+                if let Some(k) = g.kill.take() {
+                    let _ = k.send(());
+                }
+                stopped.push(id.clone());
+            }
+        }
+    }
+    // Wait (briefly) for them to exit so a new launch doesn't collide.
+    for _ in 0..50 {
+        let running = state.running.lock().await;
+        if stopped.iter().all(|id| !running.contains_key(id)) {
+            break;
+        }
+        drop(running);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    !stopped.is_empty()
+}
+
+/// Something the pre-load depends on changed (instance, mods, account): restart it.
+async fn invalidate_prewarm(state: &AppState) {
+    state.prewarm_paused.store(false, std::sync::atomic::Ordering::SeqCst);
+    // The monitor re-schedules a pre-load after a stopped one exits.
+    stop_waiting_prewarms(state, None).await;
+}
+
+/// Starts a pre-load now if none is running (after the pause flag was cleared).
+fn kick_prewarm(app: &AppHandle, state: &Arc<AppState>) {
+    schedule_prewarm(app.clone(), state.clone(), std::time::Duration::from_secs(3));
 }
 
 type S<'a> = State<'a, Arc<AppState>>;
@@ -85,13 +162,30 @@ async fn get_settings(state: S<'_>) -> CmdResult<Settings> {
 }
 
 #[tauri::command]
-async fn save_settings(state: S<'_>, settings: Settings) -> CmdResult<()> {
+async fn save_settings(app: AppHandle, state: S<'_>, settings: Settings) -> CmdResult<()> {
     let mut s = state.settings.write().await;
     // These are owned by the backend; keep the backend's values.
     let keep_active = s.active_account_id.clone();
     let keep_last = s.last_instance_id.clone();
-    *s = Settings { active_account_id: keep_active, last_instance_id: keep_last, ..settings };
+    let before = s.clone();
+    // The instance picked on Home is the one Instant Play pre-loads.
+    let last = settings.last_instance_id.clone().or(keep_last);
+    *s = Settings { active_account_id: keep_active, last_instance_id: last, ..settings };
     write_json(&state.paths.settings_file(), &*s)?;
+    let after = s.clone();
+    drop(s);
+    if before.start_with_windows != after.start_with_windows {
+        use tauri_plugin_autostart::ManagerExt;
+        let al = app.autolaunch();
+        let _ = if after.start_with_windows { al.enable() } else { al.disable() };
+    }
+    let prewarm_changed = before.instant_play != after.instant_play || before.last_instance_id != after.last_instance_id || before.class_data_sharing != after.class_data_sharing;
+    if prewarm_changed {
+        invalidate_prewarm(&state).await;
+        if after.instant_play {
+            kick_prewarm(&app, state.inner());
+        }
+    }
     Ok(())
 }
 
@@ -236,8 +330,10 @@ async fn set_active(state: &AppState, id: Option<String>) -> anyhow::Result<()> 
 }
 
 #[tauri::command]
-async fn set_active_account(state: S<'_>, id: String) -> CmdResult<()> {
+async fn set_active_account(app: AppHandle, state: S<'_>, id: String) -> CmdResult<()> {
     set_active(&state, Some(id)).await?;
+    invalidate_prewarm(&state).await;
+    kick_prewarm(&app, state.inner());
     Ok(())
 }
 
@@ -293,6 +389,7 @@ async fn add_offline(state: S<'_>, name: String) -> CmdResult<Account> {
 
 #[tauri::command]
 async fn remove_account(state: S<'_>, id: String) -> CmdResult<()> {
+    invalidate_prewarm(&state).await;
     let mut store = state.accounts.lock().await;
     store.accounts.retain(|a| a.id != id);
     store.save(&state.paths)?;
@@ -480,6 +577,8 @@ async fn update_instance(app: AppHandle, state: S<'_>, instance: Instance) -> Cm
         cur.version_id = None;
     }
     instances::save(&state.paths, &cur)?;
+    invalidate_prewarm(&state).await;
+    kick_prewarm(&app, state.inner());
     Ok(view(&app, &state, cur).await)
 }
 
@@ -519,14 +618,18 @@ async fn list_content(state: S<'_>, id: String) -> CmdResult<Vec<instances::Cont
 }
 
 #[tauri::command]
-async fn toggle_content(state: S<'_>, id: String, key: String, enabled: bool) -> CmdResult<()> {
+async fn toggle_content(app: AppHandle, state: S<'_>, id: String, key: String, enabled: bool) -> CmdResult<()> {
     instances::set_enabled(&state.paths, &id, &key, enabled)?;
+    invalidate_prewarm(&state).await;
+    kick_prewarm(&app, state.inner());
     Ok(())
 }
 
 #[tauri::command]
-async fn remove_content(state: S<'_>, id: String, key: String) -> CmdResult<()> {
+async fn remove_content(app: AppHandle, state: S<'_>, id: String, key: String) -> CmdResult<()> {
     instances::remove_content(&state.paths, &id, &key)?;
+    invalidate_prewarm(&state).await;
+    kick_prewarm(&app, state.inner());
     Ok(())
 }
 
@@ -579,6 +682,8 @@ async fn install_project(app: AppHandle, state: S<'_>, req: InstallReq) -> CmdRe
     } else {
         content::install_modrinth(&ctx, &req.project_id, req.version_id.as_deref(), Some(&req.kind)).await?
     };
+    invalidate_prewarm(&state).await;
+    kick_prewarm(&app, state.inner());
     Ok(r)
 }
 
@@ -685,8 +790,33 @@ async fn repair_instance(app: AppHandle, state: S<'_>, id: String) -> CmdResult<
 
 #[tauri::command]
 async fn launch_instance(app: AppHandle, state: S<'_>, id: String, server: Option<String>) -> CmdResult<()> {
-    launch::launch(app, state.inner().clone(), id, server).await?;
+    play(&app, state.inner(), &id, server).await?;
     Ok(())
+}
+
+/// Play: shows the pre-loaded game instantly if it's this instance, otherwise
+/// stops any hidden pre-load and launches normally.
+async fn play(app: &AppHandle, state: &Arc<AppState>, id: &str, server: Option<String>) -> anyhow::Result<()> {
+    state.prewarm_paused.store(false, std::sync::atomic::Ordering::SeqCst);
+    // Quick-join needs the server on the command line, so it can't reuse a pre-load.
+    if server.is_none() && launch::reveal(app, state, id).await? {
+        return Ok(());
+    }
+    stop_waiting_prewarms(state, None).await;
+    launch::launch(app.clone(), state.clone(), id.to_string(), server, false).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchStateView {
+    instance_id: String,
+    phase: String,
+}
+
+/// Current phase of every live game (used when the window is reopened).
+#[tauri::command]
+async fn launch_states(state: S<'_>) -> CmdResult<Vec<LaunchStateView>> {
+    Ok(state.running.lock().await.iter().map(|(id, g)| LaunchStateView { instance_id: id.clone(), phase: g.phase().into() }).collect())
 }
 
 #[tauri::command]
@@ -701,7 +831,8 @@ async fn stop_instance(state: S<'_>, id: String) -> CmdResult<()> {
 
 #[tauri::command]
 async fn running_instances(state: S<'_>) -> CmdResult<Vec<String>> {
-    Ok(state.running.lock().await.keys().cloned().collect())
+    // Only games the player can see count as running.
+    Ok(state.running.lock().await.iter().filter(|(_, g)| !g.waiting()).map(|(k, _)| k.clone()).collect())
 }
 
 #[tauri::command]
@@ -805,24 +936,57 @@ pub fn run() {
         logs: Default::default(),
         discord: Default::default(),
         update: Default::default(),
+        prewarm_paused: Default::default(),
         paths,
     });
     let root = state.paths.root.clone();
 
-    tauri::Builder::default()
+    let start_hidden = std::env::args().any(|a| a == "--background");
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            open_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .setup(move |app| {
             // Screenshots and instance icons are shown straight from the data folder.
             app.asset_protocol_scope().allow_directory(&root, true)?;
+            // The window is created on demand; at login Halo starts with only the tray.
+            if !start_hidden {
+                open_main_window(app.handle());
+            }
+            build_tray(app.handle())?;
+            // Keep "Start with Windows" in sync with the setting.
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let want = tauri::async_runtime::block_on(async { app.state::<Arc<AppState>>().settings.read().await.start_with_windows });
+                let al = app.autolaunch();
+                if al.is_enabled().unwrap_or(false) != want {
+                    let _ = if want { al.enable() } else { al.disable() };
+                }
+            }
+            // Instant Play: pre-load shortly after start, then refresh every 12 h so
+            // the login in the waiting game never goes stale.
+            {
+                let handle = app.handle().clone();
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                schedule_prewarm(handle.clone(), state.clone(), std::time::Duration::from_secs(4));
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30 * 60)).await;
+                        let stale = {
+                            let running = state.running.lock().await;
+                            running.values().any(|g| g.waiting() && g.prewarm.as_ref().map(|p| p.lock().unwrap().created.elapsed().as_secs() > 12 * 3600).unwrap_or(false))
+                        };
+                        if stale {
+                            log::info!("Instant Play: refreshing a 12 h old pre-load");
+                            stop_waiting_prewarms(&state, None).await;
+                        }
+                    }
+                });
+            }
             // Background auto-update check shortly after start (never delays opening).
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -903,7 +1067,88 @@ pub fn run() {
             search_content,
             get_project,
             get_project_versions,
+            launch_states,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Halo Client");
+        .build(tauri::generate_context!())
+        .expect("error while building Halo Client");
+
+    app.run(|app, event| match event {
+        // Closing the window keeps Halo in the tray (if enabled); the window itself
+        // is destroyed so its webview stops using memory.
+        tauri::RunEvent::ExitRequested { api, code: None, .. } => {
+            let state = app.state::<Arc<AppState>>();
+            let keep = tauri::async_runtime::block_on(async { state.settings.read().await.run_in_background });
+            if keep {
+                api.prevent_exit();
+            }
+        }
+        tauri::RunEvent::Exit => {
+            // Never leave a hidden pre-load running after Halo quits.
+            let state = app.state::<Arc<AppState>>();
+            let pids: Vec<u32> = tauri::async_runtime::block_on(async { state.running.lock().await.values().filter(|g| g.waiting()).filter_map(|g| g.pid).collect() });
+            for pid in pids {
+                winctl::terminate(pid);
+            }
+        }
+        _ => {}
+    });
+}
+
+/// Shows the main window, creating it if it was closed to the tray.
+fn open_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+    if let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == "main").cloned() {
+        match tauri::WebviewWindowBuilder::from_config(app, &cfg).and_then(|b| b.build()) {
+            Ok(w) => {
+                let _ = w.set_focus();
+            }
+            Err(e) => log::error!("couldn't open the window: {e}"),
+        }
+    }
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    let play_item = MenuItem::with_id(app, "play", "Play", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Halo Client", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&play_item, &open, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("halo").tooltip("Halo Client").menu(&menu).show_menu_on_left_click(false);
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.on_menu_event(|app, event| match event.id().as_ref() {
+        "play" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                let last = state.settings.read().await.last_instance_id.clone();
+                match last {
+                    Some(id) => {
+                        if let Err(e) = play(&app, &state, &id, None).await {
+                            log::warn!("tray play failed: {e:#}");
+                            open_main_window(&app);
+                        }
+                    }
+                    None => open_main_window(&app),
+                }
+            });
+        }
+        "open" => open_main_window(app),
+        "quit" => app.exit(0),
+        _ => {}
+    })
+    .on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            open_main_window(tray.app_handle());
+        }
+    })
+    .build(app)?;
+    Ok(())
 }
