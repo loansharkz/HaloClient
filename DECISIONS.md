@@ -82,7 +82,7 @@ PvP players, modpack players, SMP/economy players.
 ## Choices made while building (autonomous)
 - **Target Minecraft for Halo HUD: 26.3** (current release; Fabric Loader 0.20.1, Fabric API 0.165.0+26.3, Java 25, unobfuscated Mojang names). Versions were read from FabricMC's own example mod and Fabric API source.
 - **Halo HUD zoom uses the FOV option**, not a mixin, so a renamed game internal can't crash the game. Zoom goes down to FOV 30 with optional smooth camera. All HUD features are display-only.
-- **Halo HUD is compiled in CI.** This dev container can't reach maven.fabricmc.net, so the mod was written against APIs confirmed in Fabric API's 26.3 source and was never compiled locally. If CI finds an API mismatch, the launcher still releases without the HUD.
+- **Halo HUD is compiled in CI.** It builds against the real Minecraft 26.3 + Fabric API 0.165.0 on GitHub Actions. The first build caught two members renamed in 26.3 (`Minecraft.screen`, `Options.hideGui`); both checks were removed. Bundled in v0.1.0.
 - **AppCDS only when every classpath entry is a jar.** A real-JVM test showed Java refuses to dump an archive when the classpath contains a directory, and that failure would look like a crash.
 - **Tuned G1 flags** (40 ms pause target, fast young gen, no AlwaysPreTouch, which would slow boot). Verified on a real Java 21 JVM in tests.
 - **Self-update:** checks GitHub Releases and links to the installer, instead of Tauri's signed updater, which needs a signing key you'd have to generate. That can be switched on later.
@@ -94,6 +94,8 @@ PvP players, modpack players, SMP/economy players.
 
 - **Discord presence** uses the Discord app's name ("Halo Client") and an art asset named `halo`, plus a "Get Halo Client" button linking to the download page (`HALO_DOWNLOAD_URL`, default GitHub Pages). Logo files are in `branding/`.
 - **Distribution:** public repo → GitHub Releases for installers, plus a one-page download site in `site/` on GitHub Pages. Its button finds the newest `-setup.exe` through the GitHub API. Unsigned for now, so SmartScreen warns once.
+
+- **v0.1.0 released 2026-11-02:** `Halo.Client_0.1.0_x64-setup.exe` (5.1 MB) and `.msi` (6.1 MB) on GitHub Releases. Download page: https://loansharkz.github.io/haloclient/
 
 ## Multiplayer test log
 | Phase | Date | Online server | Local server | Result |
