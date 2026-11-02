@@ -1,5 +1,6 @@
 name: Release
-# Push a tag like v0.1.0 to build the Windows installers and publish a GitHub Release.
+# Bump "version" in src-tauri/tauri.conf.json, then push a tag (v0.1.0) or run this workflow from the Actions tab.
+# It builds the Windows installers and publishes the GitHub Release (creating the tag if needed).
 on:
   push:
     tags: ["v*"]
@@ -65,8 +66,9 @@ jobs:
           HALO_SENTRY_DSN: ${{ secrets.HALO_SENTRY_DSN }}
           HALO_DISCORD_APP_ID: ${{ secrets.HALO_DISCORD_APP_ID }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Halo Client ${{ github.ref_name }}
+          # v__VERSION__ comes from tauri.conf.json, so manual runs create the tag too.
+          tagName: v__VERSION__
+          releaseName: Halo Client v__VERSION__
           releaseBody: See the assets below for the Windows installer (.msi or setup .exe).
           releaseDraft: false
           prerelease: false
