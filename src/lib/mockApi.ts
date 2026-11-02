@@ -88,7 +88,7 @@ const asHit = (p: P): T.SearchHit => ({
 
 let settings: T.Settings = {
   theme: "dark", accentHue: 275, animatedBackground: true, defaultRamMb: 4096, downloadThreads: 12, closeOnLaunch: false, discordRpc: true,
-  crashReports: true, crashReportsPrompted: true, autoJava: true, preflight: true, showReservedSlots: false, browseView: "list",
+  crashReports: true, crashReportsPrompted: true, autoUpdate: true, autoJava: true, preflight: true, showReservedSlots: false, browseView: "list",
   activeAccountId: "a1", lastInstanceId: "halo-pvp", msaClientId: null,
 };
 try {
@@ -159,6 +159,10 @@ export async function mockCall(cmd: string, a: Record<string, any>): Promise<unk
     case "preflight":
       await sleep(500);
       return { accountOk: true, accountMessage: null, instanceId: settings.lastInstanceId, instanceReady: true } satisfies T.Preflight;
+    case "prepare_update":
+      return null;
+    case "apply_update":
+      return;
     case "check_update":
       return { current: "0.1.0", latest: "0.1.0", available: false, url: null } satisfies T.UpdateCheck;
     case "game_versions":

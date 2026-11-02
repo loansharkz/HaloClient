@@ -113,6 +113,98 @@ pub fn newer(a: &str, b: &str) -> bool {
     false
 }
 
+// ---------------------------------------------------------------------------
+// Auto-update: download the newest installer in the background, verify its
+// SHA-256 against the digest GitHub publishes, then install silently on restart.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateReady {
+    pub version: String,
+    pub path: String,
+    pub notes_url: Option<String>,
+}
+
+const LATEST_RELEASE: &str = "https://api.github.com/repos/loansharkz/haloclient/releases/latest";
+
+/// Returns a verified installer for a newer version, downloading it if needed.
+pub async fn download_update(http: &reqwest::Client, paths: &crate::core::Paths) -> anyhow::Result<Option<UpdateReady>> {
+    use anyhow::Context;
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    let r = http.get(LATEST_RELEASE).header("Accept", "application/vnd.github+json").send().await?;
+    if !r.status().is_success() {
+        return Ok(None);
+    }
+    let v: serde_json::Value = r.json().await?;
+    let latest = v["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
+    if latest.is_empty() || !newer(&latest, crate::core::APP_VERSION) {
+        return Ok(None);
+    }
+    let asset = v["assets"]
+        .as_array()
+        .and_then(|a| a.iter().find(|x| x["name"].as_str().map(|n| n.ends_with("-setup.exe")).unwrap_or(false)))
+        .context("the latest release has no Windows installer")?;
+    let name = asset["name"].as_str().unwrap_or("halo-setup.exe");
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        anyhow::bail!("unexpected installer name");
+    }
+    // Refuse to install anything GitHub didn't publish a checksum for.
+    let expected = asset["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")).context("release has no checksum")?.to_lowercase();
+    let url = asset["browser_download_url"].as_str().context("no download url")?;
+    if !url.starts_with("https://github.com/loansharkz/") {
+        anyhow::bail!("unexpected download host");
+    }
+    let dir = paths.cache().join("updates");
+    std::fs::create_dir_all(&dir)?;
+    let dest = dir.join(name);
+    let ready = UpdateReady { version: latest, path: dest.to_string_lossy().into(), notes_url: v["html_url"].as_str().map(String::from) };
+    if dest.exists() && crate::core::sha256_file(&dest).await.map(|h| h == expected).unwrap_or(false) {
+        return Ok(Some(ready));
+    }
+    let part = dir.join(format!("{name}.part"));
+    let resp = http.get(url).send().await?.error_for_status()?;
+    let mut f = tokio::fs::File::create(&part).await?;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        f.write_all(&chunk?).await?;
+    }
+    f.flush().await?;
+    drop(f);
+    if crate::core::sha256_file(&part).await? != expected {
+        let _ = std::fs::remove_file(&part);
+        anyhow::bail!("the downloaded update failed its checksum");
+    }
+    std::fs::rename(&part, &dest)?;
+    Ok(Some(ready))
+}
+
+/// Runs the verified installer silently after Halo exits, then reopens Halo.
+pub fn install_update(installer: &std::path::Path) -> anyhow::Result<()> {
+    if !cfg!(windows) {
+        anyhow::bail!("automatic install is only available on Windows");
+    }
+    let exe = std::env::current_exe()?;
+    let script = installer.with_extension("cmd");
+    // ping is a console-free way to wait ~2s for Halo to close.
+    let body = format!(
+        "@echo off\r\nping -n 3 127.0.0.1 >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\n",
+        installer.display(),
+        exe.display()
+    );
+    std::fs::write(&script, body)?;
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.arg("/C").arg(&script);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd.spawn()?;
+    Ok(())
+}
+
 /// Starts Sentry when a DSN was compiled in and the user hasn't opted out.
 /// Events never include user info, tokens or file paths outside the app.
 pub fn init_sentry(enabled: bool) -> Option<sentry::ClientInitGuard> {

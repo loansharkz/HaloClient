@@ -39,11 +39,10 @@ export default function Settings() {
   const [checking, setChecking] = createSignal(false);
   async function checkUpdate() {
     setChecking(true);
-    const r = await attempt(() => api.checkUpdate());
+    const r = await attempt(() => api.prepareUpdate());
     setChecking(false);
-    if (!r) return;
-    if (r.available && r.url) toast(`Halo Client ${r.latest} is available`, "info", { label: "Download", run: () => api.openUrl(r.url!) });
-    else toast(r.latest ? "You're on the latest version" : "No release information yet", "ok");
+    if (r === undefined) return;
+    if (!r) toast("You're on the latest version", "ok");
   }
   async function moveData() {
     const p = await pickFile({ title: "New data folder", directory: true });
@@ -127,6 +126,9 @@ export default function Settings() {
           <Section title="Advanced" icon={KeyRound}>
             <Row title="Azure app client ID" desc="Only for developers testing their own Azure app. Leave empty to use the built-in one.">
               <input id="set-msa" class="input w-48 mono text-[12px]" placeholder={app.info?.msaConfigured ? "Built-in" : "Not configured"} value={settings.msaClientId ?? ""} onChange={(e) => setSettings("msaClientId", e.currentTarget.value.trim() || null)} />
+            </Row>
+            <Row title="Update automatically" desc="Downloads new versions in the background and verifies them. You choose when to restart.">
+              <Toggle on={settings.autoUpdate} onChange={(v) => setSettings("autoUpdate", v)} label="Update automatically" />
             </Row>
             <Row title="Show reserved ad slots" desc="Dev preview of future layout slots (ADS_ENABLED=false)">
               <Toggle on={settings.showReservedSlots} onChange={(v) => setSettings("showReservedSlots", v)} label="Show reserved slots" />

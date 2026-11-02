@@ -13,6 +13,7 @@ export interface Settings {
   discordRpc: boolean;
   crashReports: boolean;
   crashReportsPrompted: boolean;
+  autoUpdate: boolean;
   autoJava: boolean;
   preflight: boolean;
   showReservedSlots: boolean;
@@ -254,6 +255,12 @@ export interface Preflight {
   accountMessage: string | null;
   instanceId: string | null;
   instanceReady: boolean;
+}
+
+export interface UpdateReady {
+  version: string;
+  path: string;
+  notesUrl: string | null;
 }
 
 export interface UpdateCheck {

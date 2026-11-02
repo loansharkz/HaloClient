@@ -59,6 +59,8 @@ export const api = {
   openPath: (path: string) => call<void>("open_path", { path }),
   openUrl: (url: string) => call<void>("open_url", { url }),
   checkUpdate: () => call<T.UpdateCheck>("check_update"),
+  prepareUpdate: () => call<T.UpdateReady | null>("prepare_update"),
+  applyUpdate: () => call<void>("apply_update"),
   preflight: () => call<T.Preflight>("preflight"),
 
   gameVersions: () => call<T.GameVersion[]>("game_versions"),

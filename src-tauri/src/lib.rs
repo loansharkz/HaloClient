@@ -35,6 +35,7 @@ pub struct AppState {
     pub launching: Mutex<HashSet<String>>,
     pub logs: std::sync::Mutex<HashMap<String, VecDeque<String>>>,
     pub discord: extras::Discord,
+    pub update: Mutex<Option<extras::UpdateReady>>,
 }
 
 type S<'a> = State<'a, Arc<AppState>>;
@@ -120,6 +121,30 @@ async fn open_url(app: AppHandle, url: String) -> CmdResult<()> {
 #[tauri::command]
 async fn check_update(state: S<'_>) -> CmdResult<extras::UpdateCheck> {
     Ok(extras::check_update(&state.http).await?)
+}
+
+/// Downloads and verifies a newer version if there is one.
+#[tauri::command]
+async fn prepare_update(app: AppHandle, state: S<'_>) -> CmdResult<Option<extras::UpdateReady>> {
+    let r = extras::download_update(&state.http, &state.paths).await?;
+    if let Some(u) = &r {
+        *state.update.lock().await = Some(u.clone());
+        use tauri::Emitter;
+        let _ = app.emit("update-ready", u);
+    }
+    Ok(r)
+}
+
+/// Installs the downloaded update and closes Halo; the installer reopens it.
+#[tauri::command]
+async fn apply_update(app: AppHandle, state: S<'_>) -> CmdResult<()> {
+    if !state.running.lock().await.is_empty() {
+        return Err(core::CmdError("Close Minecraft before updating.".into()));
+    }
+    let u = state.update.lock().await.clone().ok_or_else(|| core::CmdError("No update has been downloaded yet.".into()))?;
+    extras::install_update(std::path::Path::new(&u.path))?;
+    app.exit(0);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -779,6 +804,7 @@ pub fn run() {
         launching: Default::default(),
         logs: Default::default(),
         discord: Default::default(),
+        update: Default::default(),
         paths,
     });
     let root = state.paths.root.clone();
@@ -797,6 +823,24 @@ pub fn run() {
         .setup(move |app| {
             // Screenshots and instance icons are shown straight from the data folder.
             app.asset_protocol_scope().allow_directory(&root, true)?;
+            // Background auto-update check shortly after start (never delays opening).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                let state = handle.state::<Arc<AppState>>().inner().clone();
+                if !state.settings.read().await.auto_update {
+                    return;
+                }
+                match extras::download_update(&state.http, &state.paths).await {
+                    Ok(Some(u)) => {
+                        *state.update.lock().await = Some(u.clone());
+                        use tauri::Emitter;
+                        let _ = handle.emit("update-ready", u);
+                    }
+                    Ok(None) => {}
+                    Err(e) => log::warn!("update check failed: {e:#}"),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -807,6 +851,8 @@ pub fn run() {
             open_path,
             open_url,
             check_update,
+            prepare_update,
+            apply_update,
             preflight,
             game_versions,
             loader_versions,

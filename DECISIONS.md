@@ -85,7 +85,7 @@ PvP players, modpack players, SMP/economy players.
 - **Halo HUD is compiled in CI.** It builds against the real Minecraft 26.3 + Fabric API 0.165.0 on GitHub Actions. The first build caught two members renamed in 26.3 (`Minecraft.screen`, `Options.hideGui`); both checks were removed. Bundled in v0.1.0.
 - **AppCDS only when every classpath entry is a jar.** A real-JVM test showed Java refuses to dump an archive when the classpath contains a directory, and that failure would look like a crash.
 - **Tuned G1 flags** (40 ms pause target, fast young gen, no AlwaysPreTouch, which would slow boot). Verified on a real Java 21 JVM in tests.
-- **Self-update:** checks GitHub Releases and links to the installer, instead of Tauri's signed updater, which needs a signing key you'd have to generate. That can be switched on later.
+- **Auto-update (v0.1.3):** shortly after startup, Halo checks GitHub Releases. It downloads a newer `-setup.exe` in the background and verifies it against the SHA-256 digest GitHub publishes (no digest, no install). It then offers "Restart to update", which runs the installer silently (`/S`) after Halo exits and reopens Halo. It can be turned off in Settings. Tauri's signed updater wasn't used because it needs a private signing key kept as a repo secret.
 - **Recent servers** come from quick-joins and "Connecting to host, port" lines in the game log. Names come from the instance's servers.dat when available.
 - **Data packs** install per world (the UI asks which world).
 - **Image CSP allows any https image**, so mod descriptions render their screenshots. Scripts, frames and styles from descriptions are stripped (DOMPurify).
@@ -96,6 +96,13 @@ PvP players, modpack players, SMP/economy players.
 - **Distribution:** public repo → GitHub Releases for installers, plus a one-page download site in `site/` on GitHub Pages. Its button finds the newest `-setup.exe` through the GitHub API. Unsigned for now, so SmartScreen warns once.
 
 - **v0.1.0 released 2026-11-02:** `Halo.Client_0.1.0_x64-setup.exe` (5.1 MB) and `.msi` (6.1 MB) on GitHub Releases. Download page: https://loansharkz.github.io/HaloClient/
+
+- **Launch hardening (v0.1.3)**, after Leo's first Windows launch stuck at "Running" with no game window and no log:
+  - Every launch writes `minecraft/logs/halo-launch.log` (Java path, version, full arguments with the token hidden, all output, exit code).
+  - Windows uses `java.exe` with its console hidden instead of `javaw.exe`.
+  - Java 9+ gets its arguments from an @argfile, which avoids the Windows 32k command-line limit. It's deleted 15 s after start because it contains the session token.
+  - A 20 s watchdog warns when the game prints nothing.
+  - The root cause is still unknown. The next launch log will show it.
 
 ## Multiplayer test log
 | Phase | Date | Online server | Local server | Result |

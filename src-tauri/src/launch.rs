@@ -188,11 +188,35 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
 
     // --- spawn
     emit_state(app, instance_id, "preparing", "Starting Minecraft");
+    // Console java.exe (window hidden) gives the most reliable output capture on Windows.
+    let java = console_java(java);
+    // Always leave a launch log, even if the game never starts.
+    let launch_log = game_dir.join("logs").join("halo-launch.log");
+    write_launch_header(&launch_log, &java, java_major, &version_id, &args, &auth.access_token);
+    log::info!("launching {instance_id} with {} (Java {java_major}), {} args", java.display(), args.len());
+    // Java 9+ reads arguments from a file, which avoids Windows' 32k command-line limit
+    // with large modded classpaths. The file holds the session token, so it's deleted
+    // right after Java has read it.
+    let argfile = paths.instance(instance_id).join(".halo").join("launch.args");
+    let spawn_args = if java_major >= 9 {
+        write_argfile(&argfile, &args)?;
+        vec![format!("@{}", argfile.display())]
+    } else {
+        args.clone()
+    };
     let mut cmd = tokio::process::Command::new(&java);
-    cmd.args(&args).current_dir(&game_dir).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).stdin(std::process::Stdio::null());
+    cmd.args(&spawn_args).current_dir(&game_dir).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).stdin(std::process::Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn().with_context(|| format!("couldn't start Java at {}", java.display()))?;
+    let spawned = cmd.spawn();
+    if java_major >= 9 {
+        let f = argfile.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let _ = std::fs::remove_file(f);
+        });
+    }
+    let mut child = spawned.with_context(|| format!("couldn't start Java at {}", java.display()))?;
     let pid = child.id();
     let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
     state.running.lock().await.insert(instance_id.to_string(), RunningGame { pid, started: Instant::now(), kill: Some(kill_tx) });
@@ -223,7 +247,7 @@ async fn launch_inner(app: &AppHandle, state: &Arc<AppState>, instance_id: &str,
     let token = auth.access_token.clone();
     let cds = inst.cds && java_major >= 19;
     tokio::spawn(async move {
-        let res = monitor(&app2, &state2, &id, child, stdout, stderr, kill_rx, clicked, &token, cds).await;
+        let res = monitor(&app2, &state2, &id, child, stdout, stderr, kill_rx, clicked, &token, cds, &launch_log).await;
         if let Err(e) = res {
             log::error!("monitor failed: {e:#}");
         }
@@ -373,6 +397,40 @@ pub fn build_args(
     args
 }
 
+/// On Windows, prefer java.exe over javaw.exe (same runtime, reliable output pipes).
+fn console_java(java: PathBuf) -> PathBuf {
+    if cfg!(windows) && java.file_name().map(|n| n.eq_ignore_ascii_case("javaw.exe")).unwrap_or(false) {
+        let j = java.with_file_name("java.exe");
+        if j.exists() {
+            return j;
+        }
+    }
+    java
+}
+
+/// Writes a Java @argfile: one quoted argument per line, with \ and " escaped.
+pub fn write_argfile(path: &Path, args: &[String]) -> anyhow::Result<()> {
+    if let Some(p) = path.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    let body: String = args.iter().map(|a| format!("\"{}\"\n", a.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+    std::fs::write(path, body)?;
+    Ok(())
+}
+
+fn write_launch_header(path: &Path, java: &Path, java_major: u32, version_id: &str, args: &[String], token: &str) {
+    let _ = std::fs::create_dir_all(path.parent().unwrap_or(path));
+    let shown: Vec<String> = args.iter().map(|a| if !token.is_empty() && token != "0" && a.contains(token) { a.replace(token, "<access token hidden>") } else { a.clone() }).collect();
+    let text = format!(
+        "Halo Client {} launch log\ntime: {}\njava: {} (Java {java_major})\nversion: {version_id}\nargs:\n  {}\n--- game output ---\n",
+        crate::core::APP_VERSION,
+        chrono::Local::now().to_rfc3339(),
+        java.display(),
+        shown.join("\n  ")
+    );
+    let _ = std::fs::write(path, text);
+}
+
 /// Splits user JVM args on whitespace, keeping "double quoted" parts together.
 pub fn split_args(s: &str) -> Vec<String> {
     let mut out = vec![];
@@ -427,8 +485,12 @@ async fn monitor(
     clicked: Instant,
     token: &str,
     cds: bool,
+    launch_log: &Path,
 ) -> anyhow::Result<()> {
     let paths = &state.paths;
+    let mut log_file = std::fs::OpenOptions::new().append(true).create(true).open(launch_log).ok();
+    let mut got_output = false;
+    let mut warned_silent = false;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     crate::core::spawn_line_reader(stdout, tx.clone());
     crate::core::spawn_line_reader(stderr, tx.clone());
@@ -450,6 +512,11 @@ async fn monitor(
                     Some(mut line) => {
                         if !token.is_empty() && token != "0" && line.contains(token) {
                             line = line.replace(token, "<access token hidden>");
+                        }
+                        got_output = true;
+                        if let Some(f) = log_file.as_mut() {
+                            use std::io::Write;
+                            let _ = writeln!(f, "{line}");
                         }
                         if boot_ms.is_none() && BOOT_MARKERS.iter().any(|m| line.contains(m)) {
                             let ms = clicked.elapsed().as_millis() as u64;
@@ -487,6 +554,16 @@ async fn monitor(
                 killed = true;
                 let _ = child.start_kill();
             }
+            // Watchdog: tell the player if the game has been silent for 20 seconds.
+            _ = tokio::time::sleep(std::time::Duration::from_millis(1000)), if !got_output && !warned_silent && started.elapsed().as_secs() >= 20 => {
+                warned_silent = true;
+                log::warn!("{id}: no output from the game after 20s");
+                let _ = app.emit("launch-warning", serde_json::json!({
+                    "instanceId": id,
+                    "message": "Minecraft hasn't printed anything for 20 seconds. It may be stuck.",
+                    "logPath": launch_log.to_string_lossy(),
+                }));
+            }
             // Fallback timer: if the game prints nothing to us, read its own latest.log for the marker.
             _ = tokio::time::sleep(std::time::Duration::from_millis(1000)), if boot_ms.is_none() && started.elapsed().as_secs() >= 3 => {
                 let log = instances::game_dir(paths, id).join("logs").join("latest.log");
@@ -504,6 +581,10 @@ async fn monitor(
         }
     };
 
+    if let Some(f) = log_file.as_mut() {
+        use std::io::Write;
+        let _ = writeln!(f, "--- process exited: {:?} after {}s", status.code(), started.elapsed().as_secs());
+    }
     let played = started.elapsed().as_secs();
     state.running.lock().await.remove(id);
     let code = status.code();
@@ -712,6 +793,16 @@ mod jvm_tests {
         assert!(args.iter().any(|a| a == "-XX:+AutoCreateSharedArchive"));
         assert!(args.iter().any(|a| a == "mc.hypixel.net:25565"));
         assert!(!args.iter().any(|a| a == "--server"), "quick play replaces --server");
+
+        // Run via an @argfile (as on Windows) with a path containing spaces, quotes and backslashes.
+        let mut tricky = args.clone();
+        tricky.extend(["C:\\Users\\Some One\\x".to_string(), "say \"hi\"".to_string()]);
+        let argfile = tmp.join("dir with space").join("launch.args");
+        write_argfile(&argfile, &tricky).unwrap();
+        let out = std::process::Command::new("java").arg(format!("@{}", argfile.display())).current_dir(&game_dir).output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "argfile run failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(stdout.contains("|C:\\Users\\Some One\\x|say \"hi\""), "{stdout}");
 
         // First run creates the CDS archive; second run must reuse it without errors.
         for run in 0..2 {

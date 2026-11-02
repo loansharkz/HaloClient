@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS: T.Settings = {
   discordRpc: true,
   crashReports: true,
   crashReportsPrompted: true,
+  autoUpdate: true,
   autoJava: true,
   preflight: true,
   showReservedSlots: false,
@@ -51,6 +52,7 @@ interface AppState {
   toasts: Toast[];
   exit: T.GameExit | null;
   preflight: T.Preflight | null;
+  update: T.UpdateReady | null;
 }
 
 export const [app, setApp] = createStore<AppState>({
@@ -68,6 +70,7 @@ export const [app, setApp] = createStore<AppState>({
   toasts: [],
   exit: null,
   preflight: null,
+  update: null,
 });
 
 export const activeAccount = () => app.accounts.find((a) => a.id === app.activeAccountId) ?? app.accounts[0] ?? null;
@@ -206,6 +209,13 @@ export async function init() {
     refreshInstances();
   });
   on("recent-servers-changed", () => refreshRecentServers());
+  on<T.UpdateReady>("update-ready", (u) => {
+    setApp("update", u);
+    toast(`Halo Client ${u.version} is ready to install`, "info", { label: "Restart now", run: () => attempt(() => api.applyUpdate()) });
+  });
+  on<{ instanceId: string; message: string; logPath: string }>("launch-warning", (w) => {
+    toast(w.message, "warn", { label: "Open launch log", run: () => attempt(() => api.openPath(w.logPath)) });
+  });
 
   if (settings.preflight) {
     api

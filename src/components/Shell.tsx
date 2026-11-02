@@ -1,8 +1,9 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { For, Show, createMemo, type JSX } from "solid-js";
-import { CircleCheck, Compass, House, Info, Layers, LoaderCircle, Minus, Moon, Plus, Settings, Square, Sun, TriangleAlert, Users, X } from "lucide-solid";
+import { CircleCheck, Compass, Download, House, Info, Layers, LoaderCircle, Minus, Moon, Plus, Settings, Square, Sun, TriangleAlert, Users, X } from "lucide-solid";
 import { HaloLogo, InstanceIcon } from "./Icons";
-import { activeAccount, app, settings, setSettings } from "../lib/store";
+import { activeAccount, app, attempt, settings, setSettings } from "../lib/store";
+import { api } from "../lib/api";
 import { ADS_ENABLED, IS_TAURI } from "../lib/config";
 
 export { default as Background } from "./Starfield";
@@ -97,6 +98,11 @@ export function TitleBar() {
             <span class="tabular-nums shrink-0">{t().total > 1 ? `${Math.round((t().done / t().total) * 100)}%` : ""}</span>
           </div>
         )}
+      </Show>
+      <Show when={app.update}>
+        <button class="chip chip-accent mr-1 cursor-pointer" title={`Install Halo Client ${app.update!.version} and reopen`} onClick={() => attempt(() => api.applyUpdate())}>
+          <Download size={12} /> Update to {app.update!.version} · Restart
+        </button>
       </Show>
       <Show when={runningCount() > 0}>
         <span class="chip chip-ok mr-2">
