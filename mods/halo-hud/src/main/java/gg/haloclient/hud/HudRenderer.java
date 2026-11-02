@@ -36,7 +36,8 @@ final class HudRenderer {
 		HudConfig c = HaloHud.config;
 		Minecraft mc = Minecraft.getInstance();
 		Player player = mc.player;
-		if (c == null || !c.enabled || player == null || mc.options.hideGui) {
+		// Drawn inside the vanilla HUD pass, so F1 (hide GUI) hides it with the rest of the HUD.
+		if (c == null || !c.enabled || player == null) {
 			return;
 		}
 		Font font = mc.font;

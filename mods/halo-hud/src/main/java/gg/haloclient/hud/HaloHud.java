@@ -49,7 +49,8 @@ public final class HaloHud implements ClientModInitializer {
 			config.save();
 		}
 
-		boolean zooming = config.zoom && zoomKey.isDown() && mc.screen == null && mc.player != null;
+		// Key mappings are released whenever a menu opens, so this is only true in-game.
+		boolean zooming = config.zoom && zoomKey.isDown() && mc.player != null;
 		if (zooming && savedFov == null) {
 			savedFov = mc.options.fov().get();
 			savedSmoothCamera = mc.options.smoothCamera;
